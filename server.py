@@ -89,7 +89,7 @@ async def get_data(
         fields: List of field names to retrieve
         filters: List of advanced filters, each with:
             - field: Field name
-            - operator: Condition operator (equals, not_equals, contains, starts_with, ends_with, greater_than, less_than, etc.)
+            - operator: Condition operator (equals, not_equals, contains, not_contains, starts_with, not_starts_with, like, not_like, greater_than, less_than, greater_than_or_equal, less_than_or_equal)
             - logical: Logical operator (and, or)
             - value: Filter value
             - brackets_before: Number of opening brackets before this condition (default: 0)
@@ -117,11 +117,13 @@ async def get_data(
             'contains': ConditionOperator.Contains,
             'not_contains': ConditionOperator.NotContains,
             'starts_with': ConditionOperator.StartsWith,
-            'ends_with': ConditionOperator.EndsWith,
+            'not_starts_with': ConditionOperator.NotStartsWith,
+            'like': ConditionOperator.Like,
+            'not_like': ConditionOperator.NotLike,
             'greater_than': ConditionOperator.GreaterThan,
             'less_than': ConditionOperator.LessThan,
-            'greater_than_or_equal': ConditionOperator.GreaterThanOrEqual,
-            'less_than_or_equal': ConditionOperator.LessThanOrEqual,
+            'greater_than_or_equal': ConditionOperator.GreaterThanOrEqualTo,
+            'less_than_or_equal': ConditionOperator.LessThanOrEqualTo,
         }
         
         logical_map = {
@@ -177,7 +179,7 @@ async def get_chart(
         row_fields: List of fields for chart rows
         column_fields: List of fields for chart columns
         value_fields: List of fields for chart values
-        chart_type: Type of chart (bar, line, pie, area, column, scatter)
+        chart_type: Type of chart (bar, pie, area, column, scatter, bubble, grid)
         title: Chart title
         filters: Optional list of filters (same format as get_data)
         top_n_options: Optional dict mapping field names to TopN config
@@ -198,11 +200,12 @@ async def get_chart(
         
         chart_type_map = {
             'bar': ChartType.Bar,
-            'line': ChartType.Line,
             'pie': ChartType.Pie,
             'area': ChartType.Area,
             'column': ChartType.Column,
             'scatter': ChartType.Scatter,
+            'bubble': ChartType.Bubble,
+            'grid': ChartType.Grid,
         }
         
         chart_type_enum = chart_type_map.get(chart_type.lower(), ChartType.Bar)
@@ -215,11 +218,13 @@ async def get_chart(
                 'contains': ConditionOperator.Contains,
                 'not_contains': ConditionOperator.NotContains,
                 'starts_with': ConditionOperator.StartsWith,
-                'ends_with': ConditionOperator.EndsWith,
+                'not_starts_with': ConditionOperator.NotStartsWith,
+                'like': ConditionOperator.Like,
+                'not_like': ConditionOperator.NotLike,
                 'greater_than': ConditionOperator.GreaterThan,
                 'less_than': ConditionOperator.LessThan,
-                'greater_than_or_equal': ConditionOperator.GreaterThanOrEqual,
-                'less_than_or_equal': ConditionOperator.LessThanOrEqual,
+                'greater_than_or_equal': ConditionOperator.GreaterThanOrEqualTo,
+                'less_than_or_equal': ConditionOperator.LessThanOrEqualTo,
             }
             
             logical_map = {
