@@ -17,7 +17,7 @@ from inmydata.CalendarAssistant import CalendarAssistant, CalendarPeriodType
 mcp = FastMCP("inmydata-agent-server")
 
 
-def get_credentials_from_context(ctx: Context) -> Dict[str, str]:
+def get_credentials_from_context(ctx: Optional[Context]) -> Dict[str, str]:
     """Extract inmydata credentials from request headers."""
     if not ctx or not hasattr(ctx, 'request_context'):
         return {}
@@ -43,7 +43,7 @@ async def get_data_simple(
     filters: List[Dict[str, str]],
     case_sensitive: bool = False,
     top_n_options: Optional[Dict[str, Dict[str, Any]]] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Retrieve structured data from inmydata using simple equality filters.
@@ -83,7 +83,8 @@ async def get_data_simple(
                 top_n_opts[field_name] = TopNOption(config['order_by_field'], config['n'])
         
         df = driver.get_data_simple(subject, fields, simple_filters, case_sensitive, top_n_opts)
-        
+        if df is None:
+            return json.dumps({"error": "no data returned"})
         return df.to_json(orient='records', date_format='iso')
     
     except Exception as e:
@@ -96,7 +97,7 @@ async def get_data(
     fields: List[str],
     filters: List[Dict[str, Any]],
     top_n_options: Optional[Dict[str, Dict[str, Any]]] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Retrieve structured data from inmydata using advanced filters (supports OR, bracketing, non-equality).
@@ -173,7 +174,8 @@ async def get_data(
                 top_n_opts[field_name] = TopNOption(config['order_by_field'], config['n'])
         
         df = driver.get_data(subject, fields, advanced_filters, top_n_opts)
-        
+        if df is None:
+            return json.dumps({"error": "no data returned"})
         return df.to_json(orient='records', date_format='iso')
     
     except Exception as e:
@@ -190,7 +192,7 @@ async def get_chart(
     title: str,
     filters: Optional[List[Dict[str, Any]]] = None,
     top_n_options: Optional[Dict[str, Dict[str, Any]]] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Generate a chart from inmydata and return the chart ID.
@@ -296,7 +298,7 @@ async def get_chart(
 @mcp.tool()
 async def get_answer(
     question: str,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get an answer to a natural language question about inmydata using conversational AI.
@@ -358,7 +360,7 @@ async def get_answer(
 @mcp.tool()
 async def get_financial_year(
     target_date: Optional[str] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get the financial year for a given date from the inmydata calendar.
@@ -399,7 +401,7 @@ async def get_financial_year(
 @mcp.tool()
 async def get_quarter(
     target_date: Optional[str] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get the financial quarter for a given date from the inmydata calendar.
@@ -440,7 +442,7 @@ async def get_quarter(
 @mcp.tool()
 async def get_month(
     target_date: Optional[str] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get the financial month for a given date from the inmydata calendar.
@@ -481,7 +483,7 @@ async def get_month(
 @mcp.tool()
 async def get_week_number(
     target_date: Optional[str] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get the financial week number for a given date from the inmydata calendar.
@@ -522,7 +524,7 @@ async def get_week_number(
 @mcp.tool()
 async def get_financial_periods(
     target_date: Optional[str] = None,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get all financial periods (year, quarter, month, week) for a given date.
@@ -565,7 +567,7 @@ async def get_calendar_period_date_range(
     financial_year: int,
     period_number: int,
     period_type: str,
-    ctx: Context = None
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Get the start and end dates for a specific calendar period.
