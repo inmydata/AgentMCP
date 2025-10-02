@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "inmydata-remote": {
+      "url": "https://your-server-url.com/sse",
+      "headers": {
+        "x-inmydata-api-key": "your-api-key-here",
+        "x-inmydata-tenant": "your-tenant-name",
+        "x-inmydata-calendar": "your-calendar-name",
+        "x-inmydata-user": "mcp-agent",
+        "x-inmydata-session-id": "mcp-session"
+      }
+    }
+  }
+}

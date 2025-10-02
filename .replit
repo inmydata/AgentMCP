@@ -28,3 +28,11 @@ args = "python server.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[ports]]
+localPort = 8000
+externalPort = 80
+
+[[ports]]
+localPort = 8001
+externalPort = 3000

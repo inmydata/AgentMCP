@@ -42,24 +42,72 @@ Required environment variables (see `.env.example`):
 
 ## Usage
 
-### Running the Server
+### Local Server (stdio transport)
 
-The server runs via stdio transport for local MCP client connections:
+For local MCP client connections:
 ```bash
 python server.py
 ```
 
-### Connecting an MCP Client
+The server communicates via standard input/output following the MCP protocol. Environment variables are read from `.env` file.
 
-MCP clients can connect to this server using stdio transport with:
+### Remote Server (SSE/HTTP transport)
+
+For remote deployment on AWS, Google Cloud, Azure, etc:
 ```bash
-python server.py
+python server_remote.py sse 8000
+# or
+python server_remote.py streamable-http 8000
 ```
 
-The server will communicate via standard input/output following the MCP protocol.
+The remote server:
+- Exposes HTTP endpoints for remote MCP client connections
+- Accepts inmydata credentials securely via HTTP headers (not environment variables)
+- Supports both SSE and Streamable HTTP transports
+- Can be deployed on any cloud platform (AWS, GCP, Azure, Render, Railway, etc.)
+
+#### Required Headers for Remote Server
+
+Clients must include these headers when connecting:
+- `x-inmydata-api-key`: Your inmydata API key
+- `x-inmydata-tenant`: Your tenant name
+- `x-inmydata-calendar`: Your calendar name
+- `x-inmydata-user` (optional): User for events (default: mcp-agent)
+- `x-inmydata-session-id` (optional): Session ID (default: mcp-session)
+
+See `deployment-guide.md` for detailed deployment instructions.
+
+## Deployment
+
+### Docker Deployment
+
+```bash
+docker build -t inmydata-mcp-server .
+docker run -p 8000:8000 inmydata-mcp-server
+```
+
+Or using docker-compose:
+```bash
+docker-compose up -d
+```
+
+### Cloud Platforms
+
+- **AWS**: ECS, App Runner, or Lambda
+- **Google Cloud**: Cloud Run
+- **Azure**: Container Apps
+- **Render/Railway/Fly.io**: Direct GitHub deployment
+
+See `deployment-guide.md` for platform-specific instructions and `client-config-example.json` for client configuration.
 
 ## Recent Changes
 
+- 2025-10-02: Remote deployment support
+  - Added `server_remote.py` with SSE/HTTP transport for remote hosting
+  - Implemented secure credential passing via HTTP headers
+  - Created Docker deployment configuration
+  - Added comprehensive deployment guide for AWS, GCP, Azure
+  
 - 2025-10-01: Initial implementation
   - Created MCP server with FastMCP framework
   - Implemented all inmydata SDK tools as MCP tools
