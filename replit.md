@@ -77,6 +77,24 @@ Clients must include these headers when connecting:
 
 See `deployment-guide.md` for detailed deployment instructions.
 
+### Example Client
+
+The `example_client.py` script demonstrates how to connect to and use the MCP server:
+
+```bash
+# Connect to local server (stdio)
+python example_client.py local
+
+# Connect to remote server (SSE)
+python example_client.py remote
+```
+
+The example client shows:
+- Connecting to both local (stdio) and remote (SSE) servers
+- Calling all MCP tools (StructuredData, ConversationalData, CalendarAssistant)
+- Handling streaming progress notifications from long-running queries
+- Proper error handling and credential management
+
 ## Deployment
 
 ### Docker Deployment
@@ -102,11 +120,12 @@ See `deployment-guide.md` for platform-specific instructions and `client-config-
 
 ## Recent Changes
 
-- 2025-10-02: Remote deployment support
+- 2025-10-02: Remote deployment support & example client
   - Added `server_remote.py` with SSE/HTTP transport for remote hosting
   - Implemented secure credential passing via HTTP headers
   - Created Docker deployment configuration
   - Added comprehensive deployment guide for AWS, GCP, Azure
+  - Created `example_client.py` demonstrating FastMCP Client usage for both local and remote servers
   
 - 2025-10-01: Initial implementation
   - Created MCP server with FastMCP framework
