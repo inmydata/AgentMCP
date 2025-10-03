@@ -47,8 +47,6 @@ async def example_local_server():
             await example_structured_data_advanced(session)
             await example_chart_generation(session)
             await example_conversational_data(session)
-            # Demonstrate attaching a progress handler and receiving updates
-            await example_with_progress_handler(session)
             await example_calendar_assistant(session)
             
             print("\n✓ Local server examples completed\n")
@@ -88,8 +86,6 @@ async def example_remote_server():
                 await example_structured_data_advanced(session)
                 await example_chart_generation(session)
                 await example_conversational_data(session)
-                # Demonstrate attaching a progress handler and receiving updates
-                await example_with_progress_handler(session)
                 await example_calendar_assistant(session)
                 
                 print("\n✓ Remote server examples completed\n")
@@ -184,11 +180,17 @@ async def example_conversational_data(session: ClientSession):
     query is processed by inmydata's AI.
     
     Note: Update the question to match your actual data.
+    
+    Progress Notifications: The server sends progress updates via MCP protocol
+    during long-running queries. These are visible in MCP-compliant clients
+    like Claude Desktop. The basic Python ClientSession in this example doesn't
+    display them, but they are being sent by the server.
     """
     print("--- Example: get_answer (conversational) ---")
     print("Note: This example uses a placeholder question - update to query your actual data")
-    print("Query: 'What were the top 3 products by revenue last quarter?'")
-    print("(This may take 30-60 seconds, MCP progress notifications will be sent automatically)\n")
+    print("Query: 'Give me the top 10 stores this year'")
+    print("(This may take 30-60 seconds)")
+    print("(Progress notifications are sent by server but not displayed in this basic example)\n")
     
     try:
         # README conversational example
@@ -249,52 +251,6 @@ def print_tool_result(result):
         else:
             print(content)
     print()
-
-
-def _attach_progress_handler(session: ClientSession):
-    """
-    Attach a progress handler to the ClientSession using MCP's built-in notification system.
-    This will print progress messages sent from the server via ctx.report_progress().
-    """
-    def _print_progress(payload):
-        # payload is a dict with at least 'message' and optionally 'progress'
-        prog = payload.get('progress')
-        msg = payload.get('message') or payload.get('text') or json.dumps(payload)
-        prefix = f"[progress {prog}]" if prog is not None else "[progress]"
-        print(f"{prefix} {msg}")
-
-    # Register for 'progress' notifications
-    session.add_notification_handler('progress', _print_progress)
-
-
-async def example_with_progress_handler(session: ClientSession):
-    """
-    Example: Progress notifications from long-running queries.
-    
-    Note: Progress events are automatically forwarded by the server during
-    get_answer calls. The MCP protocol handles progress notifications
-    automatically - MCP clients will receive progress updates as the
-    server processes long-running queries.
-    
-    The inmydata server forwards ai_question_update events as MCP progress
-    notifications, so any MCP-compliant client will automatically receive
-    and can display these updates to users.
-    """
-    print("--- Example: get_answer with automatic progress ---")
-    print("Note: MCP clients automatically receive progress notifications")
-    print("      from the server during long-running queries.\n")
-    # Attach a progress handler if possible (prints messages received from server)
-    _attach_progress_handler(session)
-
-    result = await session.call_tool(
-        "get_answer",
-        arguments={
-            "question": "Analyze sales trends over the past 6 months"
-        }
-    )
-
-    print("Query completed (progress was sent automatically by server)")
-    print_tool_result(result)
 
 
 async def example_chart_generation(session: ClientSession):
