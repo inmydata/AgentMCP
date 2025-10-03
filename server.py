@@ -639,5 +639,3 @@ async def get_calendar_period_date_range(
         return json.dumps({"error": str(e)})
 
 
-if __name__ == "__main__":
-    mcp.run()
