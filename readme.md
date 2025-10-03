@@ -95,6 +95,27 @@ The example client shows:
 - Handling streaming progress notifications from long-running queries
 - Proper error handling and credential management
 
+### Claude Desktop (stdio) integration
+
+Claude Desktop can run local tools over stdio. To make it easy to launch the MCP server with your local `.env` credentials, a small launcher is provided at `scripts/claude-launch.ps1`.
+
+Steps:
+- Save your credentials in `.env` (see `.env.example`).
+- In Claude Desktop create a new tool entry:
+  - Command: `powershell`
+  - Arguments: `-NoProfile -ExecutionPolicy Bypass -File "<repo-root>\scripts\claude-launch.ps1"`
+  - Working directory: `<repo-root>`
+  - Configure the tool to use stdio for input/output.
+- Start the tool in Claude. Claude will spawn the PowerShell script which loads `.env` into the process and execs `python server.py`. Claude will then communicate with the MCP server over stdio.
+
+Notes:
+- If you prefer not to use a `.env` file, set the environment variables directly in the Claude tool definition (the tool's environment will be applied to the spawned process).
+- If the tool exits immediately, run the same command locally to inspect errors:
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\claude-launch.ps1
+  ```
+
+
 ## Deployment
 
 ### Docker Deployment
