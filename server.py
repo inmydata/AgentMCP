@@ -6,17 +6,6 @@ from dotenv import load_dotenv
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Context
-from inmydata.StructuredData import (
-    StructuredDataDriver,
-    AIDataSimpleFilter,
-    AIDataFilter,
-    LogicalOperator,
-    ConditionOperator,
-    TopNOption,
-    ChartType
-)
-from inmydata.ConversationalData import ConversationalDataDriver
-from inmydata.CalendarAssistant import CalendarAssistant, CalendarPeriodType
 
 load_dotenv()
 
@@ -123,6 +112,8 @@ async def get_data_simple(
     Returns:
         JSON string containing the query results as a pandas DataFrame in JSON format
     """
+    from inmydata.StructuredData import StructuredDataDriver, AIDataSimpleFilter, TopNOption
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         if not tenant:
@@ -179,6 +170,8 @@ async def get_data(
     Returns:
         JSON string containing the query results
     """
+    from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalOperator, ConditionOperator, TopNOption
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         if not tenant:
@@ -267,6 +260,8 @@ async def get_chart(
     Returns:
         JSON string with chart_id
     """
+    from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalOperator, ConditionOperator, TopNOption, ChartType
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         if not tenant:
@@ -363,6 +358,8 @@ async def get_answer(
     Returns:
         JSON string containing the answer, subject used, and any additional metadata
     """
+    from inmydata.ConversationalData import ConversationalDataDriver
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         if not tenant:
@@ -418,6 +415,8 @@ async def get_financial_year(
     Returns:
         JSON string with the financial year
     """
+    from inmydata.CalendarAssistant import CalendarAssistant
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         calendar = os.environ.get('INMYDATA_CALENDAR')
@@ -453,6 +452,8 @@ async def get_quarter(
     Returns:
         JSON string with the quarter
     """
+    from inmydata.CalendarAssistant import CalendarAssistant
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         calendar = os.environ.get('INMYDATA_CALENDAR')
@@ -488,6 +489,8 @@ async def get_month(
     Returns:
         JSON string with the month
     """
+    from inmydata.CalendarAssistant import CalendarAssistant
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         calendar = os.environ.get('INMYDATA_CALENDAR')
@@ -523,6 +526,8 @@ async def get_week_number(
     Returns:
         JSON string with the week number
     """
+    from inmydata.CalendarAssistant import CalendarAssistant
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         calendar = os.environ.get('INMYDATA_CALENDAR')
@@ -558,6 +563,8 @@ async def get_financial_periods(
     Returns:
         JSON string with all financial periods
     """
+    from inmydata.CalendarAssistant import CalendarAssistant
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         calendar = os.environ.get('INMYDATA_CALENDAR')
@@ -603,6 +610,8 @@ async def get_calendar_period_date_range(
     Returns:
         JSON string with start_date and end_date
     """
+    from inmydata.CalendarAssistant import CalendarAssistant, CalendarPeriodType
+    
     try:
         tenant = os.environ.get('INMYDATA_TENANT')
         calendar = os.environ.get('INMYDATA_CALENDAR')
