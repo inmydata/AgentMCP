@@ -23,6 +23,84 @@ load_dotenv()
 mcp = FastMCP("inmydata-agent-server")
 
 
+def _to_primitive(obj, _seen=None):
+    """
+    Recursively convert an SDK/domain object into JSON-serializable primitives.
+    - dates/datetimes -> ISO strings
+    - lists/tuples -> lists
+    - dicts -> dicts
+    - other objects -> map of public attrs -> primitive
+    This is defensive: if attribute access raises, it falls back to str().
+    """
+    if _seen is None:
+        _seen = set()
+
+    # primitives
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    # dates and datetimes
+    try:
+        from datetime import date, datetime
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+    except Exception:
+        pass
+
+    # containers
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_primitive(o, _seen) for o in obj]
+    if isinstance(obj, dict):
+        return {str(k): _to_primitive(v, _seen) for k, v in obj.items()}
+
+    # avoid recursion
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return str(obj)
+    _seen.add(obj_id)
+
+    # try dataclass / __dict__ style
+    try:
+        if hasattr(obj, '__dict__') and obj.__dict__:
+            result = {}
+            for k, v in vars(obj).items():
+                if k.startswith('_'):
+                    continue
+                try:
+                    result[k] = _to_primitive(v, _seen)
+                except Exception:
+                    result[k] = str(v)
+            return result
+    except Exception:
+        pass
+
+    # fallback: inspect public attributes
+    result = {}
+    try:
+        for attr in [a for a in dir(obj) if not a.startswith('_')]:
+            try:
+                val = getattr(obj, attr)
+            except Exception:
+                continue
+            if callable(val):
+                continue
+            try:
+                result[attr] = _to_primitive(val, _seen)
+            except Exception:
+                result[attr] = str(val)
+        if result:
+            return result
+    except Exception:
+        pass
+
+    # final fallback
+    try:
+        return str(obj)
+    except Exception:
+        return None
+
+
+
 @mcp.tool()
 async def get_data_simple(
     subject: str,
@@ -494,8 +572,14 @@ async def get_financial_periods(
             dt = date.today()
         
         periods = assistant.get_financial_periods(dt)
-        
-        return json.dumps({"periods": periods, "date": dt.isoformat()})
+
+        # Convert SDK/domain objects to JSON-serializable primitives
+        try:
+            serializable = _to_primitive(periods)
+        except Exception:
+            serializable = str(periods)
+
+        return json.dumps({"periods": serializable, "date": dt.isoformat()})
     
     except Exception as e:
         return json.dumps({"error": str(e)})

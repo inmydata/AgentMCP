@@ -30,6 +30,6 @@ if (Test-Path .env) {
 }
 
 # Exec python server.py in-place so stdout/stdin are connected to the calling process (Claude)
-& python server.py
+& "C:\Python310\python.exe" server.py
 
 Pop-Location

@@ -1,0 +1,8 @@
+# Requirements generated from pyproject.toml (runtime deps)
+# Python 3.11+ recommended
+inmydata>=0.0.16
+mcp>=1.15.0
+pandas>=2.3.3
+python-dotenv>=1.1.1
+# Used by server_remote.py to run the ASGI app
+uvicorn

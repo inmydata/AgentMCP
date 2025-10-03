@@ -47,6 +47,8 @@ async def example_local_server():
             await example_structured_data_advanced(session)
             await example_chart_generation(session)
             await example_conversational_data(session)
+            # Demonstrate attaching a progress handler and receiving updates
+            await example_with_progress_handler(session)
             await example_calendar_assistant(session)
             
             print("\n✓ Local server examples completed\n")
@@ -86,6 +88,8 @@ async def example_remote_server():
                 await example_structured_data_advanced(session)
                 await example_chart_generation(session)
                 await example_conversational_data(session)
+                # Demonstrate attaching a progress handler and receiving updates
+                await example_with_progress_handler(session)
                 await example_calendar_assistant(session)
                 
                 print("\n✓ Remote server examples completed\n")
@@ -120,20 +124,20 @@ async def example_structured_data_simple(session: ClientSession):
     print("Note: This example uses placeholder values - update to match your inmydata subjects\n")
     
     try:
+        # README example: TopN for Sales Person based on Sales Value in Edinburgh
         result = await session.call_tool(
             "get_data_simple",
             arguments={
-                "subject": "Sales",
+                "subject": "Inmystore Sales",
                 "filters": [
-                    {"field": "Region", "value": "North"},
-                    {"field": "Year", "value": "2024"}
+                    {"field": "Store", "value": "Edinburgh"}
                 ],
-                "fields": ["Product", "Revenue", "Quantity"],
-                "limit": 10
+                "fields": ["Sales Person", "Sales Value"],
+                "case_sensitive": False,
+                "top_n_options": {"Sales Person": {"order_by_field": "Sales Value", "n": 10}}
             }
         )
-        
-        print("Query: Sales data for North region in 2024")
+        print("Query: Top 10 Sales People in Edinburgh by Sales Value")
         print_tool_result(result)
     except Exception as e:
         print(f"⚠️  Tool call failed (expected with placeholder data): {e}")
@@ -152,28 +156,20 @@ async def example_structured_data_advanced(session: ClientSession):
     print("Note: This example uses placeholder values - update to match your inmydata subjects\n")
     
     try:
+        # README advanced example: use OR between Store=Edinburgh and Store=London
         result = await session.call_tool(
             "get_data",
             arguments={
-                "subject": "Sales",
-                "conditions": [
-                    {
-                        "field": "Revenue",
-                        "operator": "GreaterThanOrEqualTo",
-                        "value": "1000"
-                    },
-                    {
-                        "field": "Product",
-                        "operator": "In",
-                        "value": ["Widget A", "Widget B", "Widget C"]
-                    }
+                "subject": "Inmystore Sales",
+                "filters": [
+                    {"field": "Store", "operator": "equals", "logical": "and", "value": "Edinburgh", "brackets_before": 0, "brackets_after": 0, "case_sensitive": False},
+                    {"field": "Store", "operator": "equals", "logical": "or", "value": "London", "brackets_before": 0, "brackets_after": 0, "case_sensitive": False}
                 ],
-                "fields": ["Product", "Revenue", "Region", "Date"],
-                "limit": 5
+                "fields": ["Financial Year", "Store", "Sales Value"],
+                "top_n_options": {}
             }
         )
-        
-        print("Query: Sales with Revenue >= 1000 for specific products")
+        print("Query: Financial Year, Store, Sales Value for Edinburgh or London")
         print_tool_result(result)
     except Exception as e:
         print(f"⚠️  Tool call failed (expected with placeholder data): {e}")
@@ -195,10 +191,11 @@ async def example_conversational_data(session: ClientSession):
     print("(This may take 30-60 seconds, MCP progress notifications will be sent automatically)\n")
     
     try:
+        # README conversational example
         result = await session.call_tool(
             "get_answer",
             arguments={
-                "question": "What were the top 3 products by revenue last quarter?"
+                "question": "Give me the top 10 stores this year"
             }
         )
         
@@ -254,6 +251,22 @@ def print_tool_result(result):
     print()
 
 
+def _attach_progress_handler(session: ClientSession):
+    """
+    Attach a progress handler to the ClientSession using MCP's built-in notification system.
+    This will print progress messages sent from the server via ctx.report_progress().
+    """
+    def _print_progress(payload):
+        # payload is a dict with at least 'message' and optionally 'progress'
+        prog = payload.get('progress')
+        msg = payload.get('message') or payload.get('text') or json.dumps(payload)
+        prefix = f"[progress {prog}]" if prog is not None else "[progress]"
+        print(f"{prefix} {msg}")
+
+    # Register for 'progress' notifications
+    session.add_notification_handler('progress', _print_progress)
+
+
 async def example_with_progress_handler(session: ClientSession):
     """
     Example: Progress notifications from long-running queries.
@@ -270,14 +283,16 @@ async def example_with_progress_handler(session: ClientSession):
     print("--- Example: get_answer with automatic progress ---")
     print("Note: MCP clients automatically receive progress notifications")
     print("      from the server during long-running queries.\n")
-    
+    # Attach a progress handler if possible (prints messages received from server)
+    _attach_progress_handler(session)
+
     result = await session.call_tool(
         "get_answer",
         arguments={
             "question": "Analyze sales trends over the past 6 months"
         }
     )
-    
+
     print("Query completed (progress was sent automatically by server)")
     print_tool_result(result)
 
@@ -297,14 +312,16 @@ async def example_chart_generation(session: ClientSession):
         result = await session.call_tool(
             "get_chart",
             arguments={
-                "subject": "Sales",
+                "subject": "Inmystore Sales",
                 "filters": [
-                    {"field": "Year", "value": "2024"}
+                    {"field": "Financial Year", "operator": "equals", "logical": "and", "value": "2024"}
                 ],
+                "row_fields": ["Sales Person"],
+                "column_fields": [],
+                "value_fields": ["Sales Value"],
                 "chart_type": "bar",
-                "x_axis": "Product",
-                "y_axis": "Revenue",
-                "title": "2024 Revenue by Product"
+                "title": "2024 Revenue by Product",
+                "top_n_options": {"Sales Person": {"order_by_field": "Sales Value", "n": 10}}
             }
         )
         
