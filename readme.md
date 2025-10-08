@@ -81,56 +81,30 @@ Clients must include these headers when connecting:
 
 See `deployment-guide.md` for detailed deployment instructions.
 
-### Example Client
-
-The `example_client.py` script demonstrates how to connect to and use the MCP server:
-
-```bash
-# Connect to local server (stdio)
-python example_client.py local
-
-# Connect to remote server (SSE)
-python example_client.py remote
-```
-
-The example client shows:
-- Connecting to both local (stdio) and remote (SSE) servers
-- Calling all MCP tools (StructuredData, ConversationalData, CalendarAssistant)
-- Handling streaming progress notifications from long-running queries
-- Proper error handling and credential management
-
-Progress notifications: Long-running conversational queries (`get_answer`) send
-progress updates from the inmydata SDK to MCP clients using the Context's
-`report_progress()` method on the server. Python clients can receive these live
-updates by registering a notification handler for the `progress` channel. For
-example, the bundled `example_client.py` demonstrates registering a handler via:
-
-```py
-session.add_notification_handler('progress', my_progress_handler)
-```
-
-This prints progress messages as they arrive in addition to the final tool
-response.
-
 ### Claude Desktop (stdio) integration
 
-Claude Desktop can run local tools over stdio. To make it easy to launch the MCP server with your local `.env` credentials, a small launcher is provided at `scripts/claude-launch.ps1`.
+Claude Desktop can run local tools over stdio.
 
 Steps:
-- Save your credentials in `.env` (see `.env.example`).
-- In Claude Desktop create a new tool entry:
-  - Command: `powershell`
-  - Arguments: `-NoProfile -ExecutionPolicy Bypass -File "<repo-root>\scripts\claude-launch.ps1"`
-  - Working directory: `<repo-root>`
-  - Configure the tool to use stdio for input/output.
-- Start the tool in Claude. Claude will spawn the PowerShell script which loads `.env` into the process and execs `python server.py`. Claude will then communicate with the MCP server over stdio.
+Enter the following in C:\Users\[USERNAME]\AppData\Roaming\Claude\claude_desktop_config.json
 
-Notes:
-- If you prefer not to use a `.env` file, set the environment variables directly in the Claude tool definition (the tool's environment will be applied to the spawned process).
-- If the tool exits immediately, run the same command locally to inspect errors:
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\claude-launch.ps1
-  ```
+{
+  "mcpServers": {
+    "inmydata": {
+      "command": "[PATH TO PYTHON EXECUTABLE]\\python.exe",
+      "args": [
+        "[PATH TO MCP SERVER SRC]\\server.py"
+      ],
+      "env": {
+        "INMYDATA_API_KEY":"[API-KEY]",
+        "INMYDATA_TENANT": "[TENANT]",
+        "INMYDATA_CALENDAR": "[CALENDAR]",
+        "INMYDATA_USER": "[INMYDATA-USER]",
+        "INMYDATA_SESSION_ID": "[SESSION-ID]"
+      }
+    }
+  }
+}
 
 
 ## Deployment
