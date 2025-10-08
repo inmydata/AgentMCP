@@ -1,10 +1,10 @@
 [project]
 name = "repl-nix-workspace"
 version = "0.1.0"
-description = "Add your description here"
+description = "inmydata MCP server"
 requires-python = ">=3.11"
 dependencies = [
-    "inmydata>=0.0.16",
+    "inmydata>=0.0.17",
     "mcp>=1.15.0",
     "pandas>=2.3.3",
     "python-dotenv>=1.1.1",

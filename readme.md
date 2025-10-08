@@ -51,6 +51,10 @@ python server.py
 
 The server communicates via standard input/output following the MCP protocol. Environment variables are read from `.env` file.
 
+Note: Both servers use the `mcp_utils` helper class which handles all SDK interactions,
+including proper JSON serialization of responses. This ensures consistent handling
+of SDK objects (dates, calendar periods, etc.) across both local and remote modes.
+
 ### Remote Server (SSE/HTTP transport)
 
 For remote deployment on AWS, Google Cloud, Azure, etc:
@@ -94,6 +98,19 @@ The example client shows:
 - Calling all MCP tools (StructuredData, ConversationalData, CalendarAssistant)
 - Handling streaming progress notifications from long-running queries
 - Proper error handling and credential management
+
+Progress notifications: Long-running conversational queries (`get_answer`) send
+progress updates from the inmydata SDK to MCP clients using the Context's
+`report_progress()` method on the server. Python clients can receive these live
+updates by registering a notification handler for the `progress` channel. For
+example, the bundled `example_client.py` demonstrates registering a handler via:
+
+```py
+session.add_notification_handler('progress', my_progress_handler)
+```
+
+This prints progress messages as they arrive in addition to the final tool
+response.
 
 ### Claude Desktop (stdio) integration
 
@@ -139,8 +156,21 @@ docker-compose up -d
 
 See `deployment-guide.md` for platform-specific instructions and `client-config-example.json` for client configuration.
 
+Requirements note: a `requirements.txt` is included for quick installs and
+adds `uvicorn` for the remote server. Install with:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
 ## Recent Changes
 
+- 2025-10-08: Improved architecture and progress updates
+  - Unified SDK interaction via `mcp_utils` helper class
+  - Consistent JSON serialization across both servers
+  - Documented MCP progress notification API (`session.add_notification_handler('progress', handler)`)
+  - Added `requirements.txt` with uvicorn for remote server deployment
+  
 - 2025-10-02: Remote deployment support & example client
   - Added `server_remote.py` with SSE/HTTP transport for remote hosting
   - Implemented secure credential passing via HTTP headers
@@ -158,4 +188,14 @@ See `deployment-guide.md` for platform-specific instructions and `client-config-
 
 ### Streaming Progress Updates
 
-The `get_answer` tool implements streaming progress notifications. As the inmydata SDK processes natural language queries (which can take up to a minute), progress updates are forwarded from the SDK's `ai_question_update` events to MCP progress notifications, allowing clients to display real-time feedback to users.
+The `get_answer` tool implements streaming progress notifications. As the inmydata SDK processes natural language queries (which can take up to a minute), progress updates are forwarded from the SDK's `ai_question_update` events to MCP progress notifications via `ctx.report_progress()`. MCP clients can receive these updates in real-time by registering a notification handler:
+
+```python
+session.add_notification_handler('progress', handler)
+```
+
+The handler receives progress events with:
+- progress: Counter value
+- message: Human-readable progress message
+
+This enables clients to provide real-time feedback during long-running operations. The example client demonstrates printing these messages as they arrive.

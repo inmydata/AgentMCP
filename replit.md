@@ -56,11 +56,27 @@ All tools use FastMCP's `@mcp.tool()` decorator for automatic registration. Each
    - `get_chart` - Chart generation from data queries, returns chart ID for visualization
 
 2. **ConversationalData Tool**
-   - `get_answer` - Natural language queries with streaming progress updates via MCP progress notifications
+   - `get_answer` - Natural language queries with streaming progress updates
+   - Sends real-time progress via MCP Context's `report_progress()`
+   - Clients use `session.add_notification_handler('progress', handler)`
+   - Progress events include counter and human-readable message
 
 3. **CalendarAssistant Tools**
    - Financial calendar utilities (`get_financial_year`, `get_quarter`, `get_month`, `get_week_number`)
    - Period analysis (`get_financial_periods`, `get_calendar_period_date_range`)
+   - All tools return JSON-serializable data via `_to_primitive()` helper
+
+   ### Notes about serialization and progress
+
+   The local server includes `_to_primitive()` which converts SDK/domain objects
+   to JSON-serializable primitives (dates → ISO strings, objects → dicts). This
+   ensures calendar tools such as `get_financial_periods` return JSON-friendly
+   responses for clients.
+
+   Long-running queries (for example `get_answer`) stream progress updates from
+   the inmydata SDK to MCP clients by using the `Context.report_progress()` call
+   on the server. Clients can register for MCP notifications on the `progress`
+   channel; the example client demonstrates `session.add_notification_handler('progress', handler)`.
 
 ### Data Flow Architecture
 
@@ -84,14 +100,22 @@ Long-running operations (e.g., `get_answer`) subscribe to SDK progress events an
 
 ### Data Serialization Strategy
 
-**Primitive Conversion**
-The `_to_primitive()` helper function recursively converts SDK domain objects to JSON-serializable types:
-- `date`/`datetime` objects → ISO 8601 strings
-- pandas DataFrames → list of record dicts via `.to_json(orient='records')`
-- Custom objects → dictionary of public attributes
-- Circular reference protection via `_seen` set
+**Unified SDK Interaction**
+Both servers use the `mcp_utils` helper class which provides:
+- Common interface for all SDK operations
+- Consistent JSON serialization of responses
+- Automatic handling of SDK domain objects
+- Progress event forwarding
+- Credentials management
 
-This defensive conversion handles SDK response diversity without requiring extensive type mapping.
+This unified approach ensures that:
+- All tools return valid JSON
+- Calendar operations work identically in local/remote modes
+- Progress notifications flow correctly to clients
+- Error handling is consistent across all tools
+
+The helper handles converting SDK types (dates, DataFrames, domain objects)
+to JSON-friendly formats without requiring server-specific serialization code.
 
 ### Error Handling Pattern
 
@@ -155,6 +179,13 @@ Deployment guide includes patterns for:
 
 **Web Server**
 uvicorn ASGI server runs the remote FastMCP application on configurable ports (default: 8000) with SSE or streamable-HTTP transport modes.
+
+Quick install note: a `requirements.txt` is included that adds `uvicorn` for
+running the remote server. Install dependencies with:
+
+```powershell
+python -m pip install -r requirements.txt
+```
 
 ### Data Processing
 
