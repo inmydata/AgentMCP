@@ -2,7 +2,6 @@ from decimal import Decimal
 import pandas as pd
 import numpy as np
 from datetime import date, datetime
-import httpx
 import json
 from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalOperator, ConditionOperator, TopNOption
 from typing import Optional, List, Dict, Any
@@ -25,7 +24,7 @@ class mcp_utils:
         self.user = user
         self.session_id = session_id
         if not server:
-            server = "inmydata.com"
+            self.server = "inmydata.com"
         else:
             self.server = server
 
