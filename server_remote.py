@@ -2,23 +2,20 @@ import json
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import FastMCP, Context
 from mcp_utils import mcp_utils
+from fastmcp.server.dependencies import get_http_headers
+
 mcp = FastMCP("inmydata-agent-server")
 
 
-def utils(ctx: Optional[Context]) -> mcp_utils:
+def utils() -> mcp_utils:
     try:
-        if not ctx or not hasattr(ctx, 'request_context'):
-            raise RuntimeError(f"Missing context")
-
-        request = ctx.request_context
-        headers = getattr(request, 'headers', {})
+        headers = get_http_headers()
         api_key = headers.get('x-inmydata-api-key', '')
         tenant = headers.get('x-inmydata-tenant', '')
         server = headers.get('x-inmydata-server', '')
         calendar = headers.get('x-inmydata-calendar', '')
         user = headers.get('x-inmydata-user', 'mcp-agent')
         session_id = headers.get('x-inmydata-session-id', 'mcp-session')
-        
         return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
@@ -27,8 +24,7 @@ def utils(ctx: Optional[Context]) -> mcp_utils:
 async def get_rows(
     subject: str,
     select: List[str],
-    where: Optional[List[Dict[str, Any]]] = None,
-    ctx: Optional[Context] = None
+    where: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
     Retrieve rows with a simple AND-only filter list.
@@ -37,7 +33,7 @@ async def get_rows(
     Returns records (<= limit) and total_count if available.
     """
     try:
-        return await utils(ctx).get_rows(subject, select, where)
+        return await utils().get_rows(subject, select, where)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -47,8 +43,7 @@ async def get_top_n(
     group_by: str,
     order_by: str,
     n: int,
-    where: Optional[List[Dict[str, Any]]] = None,
-    ctx: Optional[Context] = None
+    where: Optional[List[Dict[str, Any]]] = None
 ) -> str:
    """
     Return top/bottom N groups by a metric.
@@ -56,7 +51,7 @@ async def get_top_n(
     where uses the same shape as get_rows.
     """
    try:
-       return await utils(ctx).get_top_n(subject, group_by, order_by, n, where)
+       return await utils().get_top_n(subject, group_by, order_by, n, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
 
@@ -78,7 +73,7 @@ async def get_answer(
     from inmydata.ConversationalData import ConversationalDataDriver
     
     try:
-        return await utils(ctx).get_answer(question, ctx)
+        return await utils().get_answer(question, ctx)
     
     except Exception as e:
         if ctx:
@@ -87,7 +82,7 @@ async def get_answer(
 
 
 @mcp.tool()
-def get_schema(ctx: Optional[Context] = None) -> str:
+def get_schema() -> str:
     """
     Get the available schema. Returns a JSON object that defines the available subjects (tables) and their columns.
 
@@ -108,7 +103,7 @@ def get_schema(ctx: Optional[Context] = None) -> str:
         ]
     """
     try:
-        return utils(ctx).get_schema()
+        return utils().get_schema()
 
     except Exception as e:
         # Mirror your C# error string style
@@ -116,8 +111,7 @@ def get_schema(ctx: Optional[Context] = None) -> str:
 
 @mcp.tool()
 async def get_financial_periods(
-    target_date: Optional[str] = None,
-    ctx: Optional[Context] = None
+    target_date: Optional[str] = None
 ) -> str:
     """
     Get all financial periods (year, quarter, month, week) for a given date.
@@ -129,7 +123,7 @@ async def get_financial_periods(
         JSON string with all financial periods
     """
     try:
-        return await utils(ctx).get_financial_periods(target_date)
+        return await utils().get_financial_periods(target_date)
     
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -139,8 +133,7 @@ async def get_financial_periods(
 async def get_calendar_period_date_range(
     financial_year: int,
     period_number: int,
-    period_type: str,
-    ctx: Optional[Context] = None
+    period_type: str
 ) -> str:
     """
     Get the start and end dates for a specific calendar period.
@@ -154,7 +147,7 @@ async def get_calendar_period_date_range(
         JSON string with start_date and end_date
     """
     try:
-        return await utils(ctx).get_calendar_period_date_range(financial_year, period_number, period_type)
+        return await utils().get_calendar_period_date_range(financial_year, period_number, period_type)
     
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -184,9 +177,9 @@ if __name__ == "__main__":
     
     if transport == "sse":
         app = mcp.sse_app()
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
     elif transport == "streamable-http":
         app = mcp.streamable_http_app()
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
     else:
         mcp.run(transport="stdio")

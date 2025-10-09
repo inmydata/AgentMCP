@@ -312,12 +312,13 @@ class mcp_utils:
             driver.on("ai_question_update", on_ai_question_update)
 
             if ctx:
-                await ctx.info(f"Starting conversational query: {question}")
+                await ctx.report_progress(progress=0, message=f"Starting conversational query: {question}")
 
             answer = await driver.get_answer(question)
 
             if ctx:
-                await ctx.info(f"Query completed. Subject used: {answer.subject}")
+                await ctx.report_progress(progress=progress_counter + 1, message=f"Query completed. Subject used: {answer.subject}")
+
 
             return json.dumps({
                 "answer": answer.answer,
@@ -384,7 +385,8 @@ class mcp_utils:
             if not self.tenant or not self.calendar:
                 return json.dumps({"error": "Tenant and calendar must be set"})
 
-            assistant = CalendarAssistant(self.tenant, self.calendar, self.server)
+            print("Getting financial periods. API key =", self.api_key)
+            assistant = CalendarAssistant(self.tenant, self.calendar, self.server, self.api_key)
 
             if target_date:
                 dt = datetime.fromisoformat(target_date).date()
@@ -428,7 +430,7 @@ class mcp_utils:
             if not self.tenant or not self.calendar:
                 return json.dumps({"error": "Tenant and Calendar variables must be set"})
 
-            assistant = CalendarAssistant(self.tenant, self.calendar, self.server)
+            assistant = CalendarAssistant(self.tenant, self.calendar, self.server, self.api_key)
 
             period_type_map = {
                 'year': CalendarPeriodType.year,
