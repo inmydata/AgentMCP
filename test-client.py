@@ -45,7 +45,7 @@ async def main():
         async def get_answer_progress_handler(progress: float, total: float | None, message: str | None):
             print(f"Progress: {message}")
         result = await client.call_tool(
-            "get_answer", 
+            "get_answer_slow", 
             {"question":"Give me the top 10 stores based on sales of furniture last year?"},
             progress_handler=get_answer_progress_handler
         )

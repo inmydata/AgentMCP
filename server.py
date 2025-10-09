@@ -25,17 +25,27 @@ def utils():
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
 
 @mcp.tool()
-async def get_rows(
+async def get_rows_fast(
     subject: str,
     select: List[str],
     where: Optional[List[Dict[str, Any]]] = None,
     ctx: Optional[Context] = None
 ) -> str:
     """
-    Retrieve rows with a simple AND-only filter list.
-    where: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
+    FAST PATH (recommended).
+    Use when the request names specific fields and simple filters (no free-form reasoning).
+    Returns rows immediately from the warehouse; far faster and cheaper than get_answer.
+
+    Examples:
+    - "Give me the specific average transaction value and profit margin percentage for each region in 2025"
+      -> get_rows(
+           subject="Sales",
+           select=["Region", "Average Transaction Value", "Profit Margin %"],
+           where=[{"field":"Financial Year","op":"equals","value":2025}]
+         )
+
+    where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
     Allowed ops: equals, contains, starts_with, gt, lt, gte, lte
-    Returns records (<= limit) and total_count if available.
     """
     try:
         return await utils().get_rows(subject, select, where)
@@ -43,7 +53,7 @@ async def get_rows(
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
-async def get_top_n(
+async def get_top_n_fast(
     subject: str,
     group_by: str,
     order_by: str,
@@ -52,9 +62,14 @@ async def get_top_n(
     ctx: Optional[Context] = None
 ) -> str:
    """
-    Return top/bottom N groups by a metric.
-    n>0 => top N, n<0 => bottom N.
-    where uses the same shape as get_rows.
+    FAST PATH for rankings and leaderboards.
+    Use when the user asks for "top/bottom N" by a metric (no free-form reasoning).
+    Much faster and cheaper than get_answer.
+
+    Example:
+    - "Top 10 regions by profit margin in 2025"
+      -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10,
+                   where=[{"field":"Financial Year","op":"equals","value":2025}])
     """
    try:
        return await utils().get_top_n(subject, group_by, order_by, n, where)
@@ -62,13 +77,17 @@ async def get_top_n(
        return json.dumps({"error": str(e)}) 
 
 @mcp.tool()
-async def get_answer(
+async def get_answer_slow(
     question: str,
     ctx: Optional[Context] = None
 ) -> str:
     """
-    Get an answer to a natural language question about inmydata using conversational AI.
-    This operation may take up to a minute and will send progress updates.
+    SLOW / EXPENSIVE (fallback).
+    Use ONLY when a request cannot be expressed with get_rows or get_top_n.
+    If the request names explicit fields, filters, years, or dimensions, prefer the fast tools above.
+
+    Example good uses: "Why did region X underperform in 2025?" (requires explanation)
+    Example bad uses:  "Avg transaction value by region in 2025" (should use get_rows)
     
     Args:
         question: Natural language question to ask (e.g., "Give me the top 10 stores this year")

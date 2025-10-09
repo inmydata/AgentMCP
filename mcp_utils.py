@@ -6,6 +6,7 @@ import json
 from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalOperator, ConditionOperator, TopNOption
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import Context
+import asyncio
 
 
 
@@ -297,17 +298,19 @@ class mcp_utils:
 
             driver = ConversationalDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
 
+            # capture the loop that owns ctx before you register the callback
+            loop = asyncio.get_running_loop()
             progress_counter = 0
 
             def on_ai_question_update(caller, message):
                 nonlocal progress_counter
                 progress_counter += 1
                 if ctx:
-                    import asyncio
-                    asyncio.create_task(ctx.report_progress(
-                        progress=progress_counter,
-                        message=message
-                    ))
+                    # schedule the coroutine onto the captured loop, thread-safely
+                    fut = asyncio.run_coroutine_threadsafe(
+                        ctx.report_progress(progress=progress_counter, message=message),
+                        loop
+                    )
 
             driver.on("ai_question_update", on_ai_question_update)
 
