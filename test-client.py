@@ -8,7 +8,7 @@ load_dotenv(".env", override=True)
 
 # With custom headers for authentication
 transport = StreamableHttpTransport(
-    url="http://localhost:8000/mcp",
+    url="https://mcp.inmydata.com/mcp",
     headers={
         "x-inmydata-api-key": os.environ.get('INMYDATA_API_KEY', ""),
         "x-inmydata-tenant": os.environ.get('INMYDATA_TENANT', ""),
