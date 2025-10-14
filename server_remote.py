@@ -1,17 +1,36 @@
 import json
+import os
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import FastMCP, Context
 from mcp_utils import mcp_utils
-from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.dependencies import get_http_headers, get_http_request
 
 mcp = FastMCP("inmydata-agent-server")
 
 
 def utils() -> mcp_utils:
     try:
+        # Fetch headers and request (if available). Preference: query parameter 'tenant' > header 'x-inmydata-tenant'
         headers = get_http_headers()
+        tenant = ''
+        try:
+            req = get_http_request()
+            if req is not None:
+                tenant = req.query_params['tenant']
+        except Exception:
+            # If get_http_request isn't available or fails, ignore and fall back to headers
+            tenant = ''
+
+        # Only use header tenant if query param not provided
+        if not tenant:
+            tenant = headers.get('x-inmydata-tenant', '')
+
+        # Check if we can pick up the api key for this tenant from env first, otherwise look for header
+        api_key = ""
+        if tenant.upper() + "_API_KEY" in os.environ:
+            api_key = os.environ.get(tenant.upper() + "_API_KEY", "")
         api_key = headers.get('x-inmydata-api-key', '')
-        tenant = headers.get('x-inmydata-tenant', '')
+
         server = headers.get('x-inmydata-server', '')
         calendar = headers.get('x-inmydata-calendar', '')
         user = headers.get('x-inmydata-user', 'mcp-agent')
