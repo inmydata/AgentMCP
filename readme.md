@@ -86,7 +86,7 @@ See `deployment-guide.md` for detailed deployment instructions.
 Claude Desktop can run local tools over stdio.
 
 Steps:
-Enter the following in C:\Users\[USERNAME]\AppData\Roaming\Claude\claude_desktop_config.json
+Enter the following in C:\Users\\\[USERNAME]\AppData\Roaming\Claude\claude_desktop_config.json
 
 {
   "mcpServers": {
