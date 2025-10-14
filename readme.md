@@ -88,6 +88,7 @@ Claude Desktop can run local tools over stdio.
 Steps:
 Enter the following in C:\Users\\\[USERNAME]\AppData\Roaming\Claude\claude_desktop_config.json
 
+```json
 {
   "mcpServers": {
     "inmydata": {
@@ -105,6 +106,7 @@ Enter the following in C:\Users\\\[USERNAME]\AppData\Roaming\Claude\claude_deskt
     }
   }
 }
+```
 
 
 ## Deployment
