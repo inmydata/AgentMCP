@@ -7,6 +7,7 @@ This is a Python web application that exposes the [inmydata agents SDK](https://
 ## Project Architecture
 
 ### Technology Stack
+
 - **Python 3.11** - Runtime environment
 - **FastMCP** - High-level MCP server framework  
 - **inmydata SDK** - Provides structured data, conversational data, and calendar tools
@@ -16,14 +17,17 @@ This is a Python web application that exposes the [inmydata agents SDK](https://
 ### MCP Tools Exposed
 
 #### StructuredData Tools
+
 - `get_data_simple` - Query inmydata subjects with simple equality filters
 - `get_data` - Advanced queries with OR logic, bracketing, and complex conditions
 - `get_chart` - Generate charts from inmydata and return chart IDs
 
 #### ConversationalData Tool  
+
 - `get_answer` - Natural language queries to inmydata (supports streaming progress updates via MCP progress notifications)
 
 #### CalendarAssistant Tools
+
 - `get_financial_year` - Get financial year for a date
 - `get_quarter` - Get financial quarter for a date  
 - `get_month` - Get financial month for a date
@@ -34,6 +38,7 @@ This is a Python web application that exposes the [inmydata agents SDK](https://
 ## Configuration
 
 Required environment variables (see `.env.example`):
+
 - `INMYDATA_API_KEY` - Your inmydata API key
 - `INMYDATA_TENANT` - Your tenant name
 - `INMYDATA_CALENDAR` - Your calendar name
@@ -45,6 +50,7 @@ Required environment variables (see `.env.example`):
 ### Local Server (stdio transport)
 
 For local MCP client connections:
+
 ```bash
 python server.py
 ```
@@ -58,6 +64,7 @@ of SDK objects (dates, calendar periods, etc.) across both local and remote mode
 ### Remote Server (SSE/HTTP transport)
 
 For remote deployment on AWS, Google Cloud, Azure, etc:
+
 ```bash
 python server_remote.py sse 8000
 # or
@@ -65,6 +72,7 @@ python server_remote.py streamable-http 8000
 ```
 
 The remote server:
+
 - Exposes HTTP endpoints for remote MCP client connections
 - Accepts inmydata credentials securely via HTTP headers (not environment variables)
 - Supports both SSE and Streamable HTTP transports
@@ -73,6 +81,7 @@ The remote server:
 #### Required Headers for Remote Server
 
 Clients must include these headers when connecting:
+
 - `x-inmydata-api-key`: Your inmydata API key
 - `x-inmydata-tenant`: Your tenant name
 - `x-inmydata-calendar`: Your calendar name
@@ -108,7 +117,6 @@ Enter the following in C:\Users\\\[USERNAME]\AppData\Roaming\Claude\claude_deskt
 }
 ```
 
-
 ## Deployment
 
 ### Docker Deployment
@@ -119,6 +127,7 @@ docker run -p 8000:8000 inmydata-mcp-server
 ```
 
 Or using docker-compose:
+
 ```bash
 docker-compose up -d
 ```
@@ -171,6 +180,7 @@ session.add_notification_handler('progress', handler)
 ```
 
 The handler receives progress events with:
+
 - progress: Counter value
 - message: Human-readable progress message
 
