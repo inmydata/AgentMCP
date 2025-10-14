@@ -29,10 +29,13 @@ def utils() -> mcp_utils:
         api_key = ""
         if tenant.upper() + "_API_KEY" in os.environ:
             api_key = os.environ.get(tenant.upper() + "_API_KEY", "")
-        api_key = headers.get('x-inmydata-api-key', '')
+        else:
+            api_key = headers.get('x-inmydata-api-key', '')
 
         server = headers.get('x-inmydata-server', '')
         calendar = headers.get('x-inmydata-calendar', '')
+        if not calendar:
+            calendar = 'Default'
         user = headers.get('x-inmydata-user', 'mcp-agent')
         session_id = headers.get('x-inmydata-session-id', 'mcp-session')
         return mcp_utils(api_key, tenant, calendar, user, session_id, server)

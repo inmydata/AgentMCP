@@ -8,7 +8,7 @@ load_dotenv(".env", override=True)
 
 # With custom headers for authentication
 transport = StreamableHttpTransport(
-    url="https://mcp.inmydata.com/mcp",
+    url="http://localhost:8000/mcp",
     headers={
         "x-inmydata-api-key": os.environ.get('INMYDATA_API_KEY', ""),
         "x-inmydata-tenant": os.environ.get('INMYDATA_TENANT', ""),
@@ -35,12 +35,12 @@ async def main():
 
 
         # Execute operations
-        #result = await client.call_tool("get_schema", {})
-        #print(result)      
-        #result = await client.call_tool("get_financial_periods", {})
-        #print(result)
-        #result = await client.call_tool("get_calendar_period_date_range", {"financial_year":2023, "period_number":3, "period_type":"month"})
-        #print(result)
+        result = await client.call_tool("get_schema", {})
+        print(result)      
+        result = await client.call_tool("get_financial_periods", {})
+        print(result)
+        result = await client.call_tool("get_calendar_period_date_range", {"financial_year":2023, "period_number":3, "period_type":"month"})
+        print(result)
        
         async def get_answer_progress_handler(progress: float, total: float | None, message: str | None):
             print(f"Progress: {message}")
