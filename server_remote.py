@@ -1,19 +1,62 @@
 import json
+import os
 from typing import Optional, List, Dict, Any
-from mcp.server.fastmcp import FastMCP, Context
+from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
+from fastmcp import FastMCP, Context
+from fastmcp.server.auth import RemoteAuthProvider
+from fastapi import FastAPI
 from mcp_utils import mcp_utils
 from fastmcp.server.dependencies import get_http_headers
+from pydantic import AnyHttpUrl
 
-mcp = FastMCP("inmydata-agent-server")
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+#get environment variables from .env file if available
+load_dotenv(".env", override=True)
+
+#get the following from environment variables:
+INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.ai')
+INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
+INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'https://auth.inmydata.com')
+
+# Configure token validation for your identity provider
+token_verifier = JWTVerifier(
+    jwks_uri=f"https://{INMYDATA_AUTH_SERVER}/.well-known/openid-configuration/jwks",
+    issuer=f"https://{INMYDATA_AUTH_SERVER}",
+    audience="inmydata.Web.API"
+)
+
+# Define the auth server that the auth provider will use
+auth_servers = [AnyHttpUrl(f"https://{INMYDATA_AUTH_SERVER}")]
+
+# Create the remote auth provider
+auth = RemoteAuthProvider(
+    token_verifier=token_verifier,
+    authorization_servers=auth_servers,
+    base_url=f"https://{INMYDATA_MCP_HOST}"  # Your server base URL
+    # Optional: customize allowed client redirect URIs (defaults to localhost only)
+    #allowed_client_redirect_uris=["http://localhost:*", "http://127.0.0.1:*","https://chatgpt.com/connector_platform_oauth_redirect", "https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]
+)
 
 
-def utils() -> mcp_utils:
+# Initialise FastMCP, and mount to FastAPI app that provides custom auth endpoints
+mcp = FastMCP(name="inmydata-agent-server", auth=auth)
+mcp_app = mcp.http_app("/")
+app = FastAPI(lifespan=mcp_app.lifespan)
+app.mount("/mcp", mcp_app)
+
+async def get_tenant(token: str) -> str:
+    access_token = await token_verifier.verify_token(token)
+    return access_token.claims.get("imd_tenant", "")
+
+async def utils() -> mcp_utils:
     try:
         headers = get_http_headers()
-        api_key = headers.get('x-inmydata-api-key', '')
-        tenant = headers.get('x-inmydata-tenant', '')
-        server = headers.get('x-inmydata-server', '')
-        calendar = headers.get('x-inmydata-calendar', '')
+        api_key = headers.get('authorization', '').replace('Bearer ', '')
+        tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
+        server = headers.get('x-inmydata-server', "")
+        calendar = headers.get('x-inmydata-calendar', 'Default')
         user = headers.get('x-inmydata-user', 'mcp-agent')
         session_id = headers.get('x-inmydata-session-id', 'mcp-session')
         return mcp_utils(api_key, tenant, calendar, user, session_id, server)
@@ -43,7 +86,7 @@ async def get_rows_fast(
     Allowed ops: equals, contains, starts_with, gt, lt, gte, lte
     """
     try:
-        return await utils().get_rows(subject, select, where)
+        return await (await utils()).get_rows(subject, select, where)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -66,7 +109,7 @@ async def get_top_n_fast(
                    where=[{"field":"Financial Year","op":"equals","value":2025}])
     """
    try:
-       return await utils().get_top_n(subject, group_by, order_by, n, where)
+       return await (await utils()).get_top_n(subject, group_by, order_by, n, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
 
@@ -92,7 +135,7 @@ async def get_answer_slow(
     from inmydata.ConversationalData import ConversationalDataDriver
     
     try:
-        return await utils().get_answer(question, ctx)
+        return await (await utils()).get_answer(question, ctx)
     
     except Exception as e:
         if ctx:
@@ -101,7 +144,7 @@ async def get_answer_slow(
 
 
 @mcp.tool()
-def get_schema() -> str:
+async def get_schema() -> str:
     """
     Get the available schema. Returns a JSON object that defines the available subjects (tables) and their columns.
 
@@ -122,7 +165,7 @@ def get_schema() -> str:
         ]
     """
     try:
-        return utils().get_schema()
+        return (await utils()).get_schema()
 
     except Exception as e:
         # Mirror your C# error string style
@@ -142,7 +185,7 @@ async def get_financial_periods(
         JSON string with all financial periods
     """
     try:
-        return await utils().get_financial_periods(target_date)
+        return await (await utils()).get_financial_periods(target_date)
     
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -166,17 +209,85 @@ async def get_calendar_period_date_range(
         JSON string with start_date and end_date
     """
     try:
-        return await utils().get_calendar_period_date_range(financial_year, period_number, period_type)
+        return await (await utils()).get_calendar_period_date_range(financial_year, period_number, period_type)
     
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+#--- Custom OAuth endpoints ---
+@app.get("/.well-known/oauth-protected-resource/mcp")
+@app.get("/.well-known/oauth-protected-resource")
+def oauth_protected_resource():
+    return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Web.API"], "bearer_methods_supported": ["header"]}
+
+# Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
+@app.get("/.well-known/oauth-authorization-server")
+@app.get("/.well-known/oauth-authorization-server/mcp")
+@app.get("/.well-known/openid-configuration")
+@app.get("/.well-known/openid-configuration/mcp")
+@app.get("/mcp/.well-known/openid-configuration")
+async def oauth_metadata():
+    return {
+        "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
+        "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
+        "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
+        "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+          "scopes_supported": [
+            "openid",
+            "profile",
+            "inmydata.Web.API"
+        ],
+        "response_types_supported": ["code"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post"],
+         "revocation_endpoint": f"https://{INMYDATA_MCP_HOST}/revoke",
+         "revocation_endpoint_auth_methods_supported": [
+            "client_secret_post"
+        ],
+         "code_challenge_methods_supported": [
+            "S256"
+        ]
+    }
+
+
+from starlette.requests import Request
+
+# For reasons I don't understand, connectors fail when going to the auth server's token endpoint directly.  This proxy seems to fix it.
+@app.post("/connect/token")
+async def token_endpoint_post(request: Request):
+    """Handle POST requests to the token endpoint"""
+    # Get form data from the request body
+    form_data = await request.form()
+    
+    # Prepare headers for form data
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://auth-dev.inmydata.com/connect/token",
+            data=dict(form_data),
+            headers=headers
+        
+        )
+        
+        return JSONResponse(
+            content=response.json(),
+            status_code=response.status_code,
+            headers=dict(response.headers)
+        )
+
+
+
 
 
 if __name__ == "__main__":
     import sys
     import uvicorn
+    import httpx
     
-    transport = "sse"
+    transport = "streamable-http"
     port = 8000
     
     if len(sys.argv) > 1:
@@ -187,18 +298,20 @@ if __name__ == "__main__":
     
     print(f"Starting MCP server with {transport} transport on port {port}")
     print("Credentials should be passed via headers:")
-    print("  x-inmydata-api-key: Your API key")
+    print("  Authorization: Your API key, prefixed with 'Bearer '.  Leav unset to trigger interactive login")
     print("  x-inmydata-tenant: Your tenant name")
     print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
     print("  x-inmydata-calendar: Your calendar name")
     print("  x-inmydata-user: User for events (optional, default: mcp-agent)")
     print("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
+
     
     if transport == "sse":
-        app = mcp.sse_app()
+        #app = mcp.sse_app()
         uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
     elif transport == "streamable-http":
-        app = mcp.streamable_http_app()
+        #app = mcp.streamable_http_app()
         uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
     else:
         mcp.run(transport="stdio")
+
