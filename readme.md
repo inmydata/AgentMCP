@@ -18,6 +18,7 @@ This is a Python web application that exposes the [inmydata agents SDK](https://
 
 #### StructuredData Tools
 
+- `get_schema` - Get the available schema. Returns a JSON object that defines the available subjects (tables) and their columns.
 - `get_data_simple` - Query inmydata subjects with simple equality filters
 - `get_data` - Advanced queries with OR logic, bracketing, and complex conditions
 - `get_chart` - Generate charts from inmydata and return chart IDs
