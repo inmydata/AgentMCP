@@ -62,7 +62,7 @@ async def get_rows_fast(
          )
 
     where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
-    Allowed ops: equals, contains, starts_with, gt, lt, gte, lte
+    Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
     """
     try:
         if not subject:

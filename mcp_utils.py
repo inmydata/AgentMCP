@@ -143,7 +143,8 @@ class mcp_utils:
         "lte": ConditionOperator.LessThanOrEqualTo,
         "<=": ConditionOperator.LessThanOrEqualTo,
         # string-ish
-        "contains": ConditionOperator.Contains,
+        "contains": ConditionOperator.Like,
+        "not_contains": ConditionOperator.NotLike,
         "starts_with": ConditionOperator.StartsWith
     }
 
@@ -225,7 +226,7 @@ class mcp_utils:
         """
         Retrieve rows with a simple AND-only filter list.
         where: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
-        Allowed ops: equals, contains, starts_with, gt, lt, gte, lte
+        Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
         Returns records (<= limit) and total_count if available.
         """
         try:
