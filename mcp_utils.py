@@ -232,13 +232,29 @@ class mcp_utils:
             if not self.tenant:
                 return json.dumps({"error": "Tenant not set"})
 
-            driver = driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
+            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
             print(f"Calling get_rows with subject={subject}, fields={select}, where={where}")
             rows = driver.get_data(subject, select, self.parse_where(where), None)
             if rows is None:
                 return json.dumps({"error": "No data returned from get_data"})
-            result_str = self.dataframe_to_LLM_string(rows)
-            return result_str
+            
+            # Convert DataFrame to simple, LLM-friendly JSON format
+            total_rows = len(rows)
+            
+            # Convert each cell to JSON-safe types
+            records = [
+                {str(col): self._to_json_safe(val) for col, val in row.items()}
+                for row in rows.to_dict(orient="records")
+            ]
+            
+            result = {
+                "subject": subject,
+                "row_count": total_rows,
+                "columns": list(map(str, rows.columns)),
+                "data": records
+            }
+            
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -270,8 +286,28 @@ class mcp_utils:
            rows = driver.get_data(subject, [group_by, order_by], self.parse_where(where), TopNOptions)
            if rows is None:
                return json.dumps({"error": "No data returned from get_top_n"})
-           result_str = self.dataframe_to_LLM_string(rows)
-           return result_str
+           
+           # Convert DataFrame to simple, LLM-friendly JSON format
+           total_rows = len(rows)
+           
+           # Convert each cell to JSON-safe types
+           records = [
+               {str(col): self._to_json_safe(val) for col, val in row.items()}
+               for row in rows.to_dict(orient="records")
+           ]
+           
+           result = {
+               "subject": subject,
+               "ranking_type": "top" if n > 0 else "bottom",
+               "n": abs(n),
+               "group_by": group_by,
+               "order_by": order_by,
+               "row_count": total_rows,
+               "columns": list(map(str, rows.columns)),
+               "data": records
+           }
+           
+           return json.dumps(result, ensure_ascii=False)
        except Exception as e:
            return json.dumps({"error": str(e)}) 
 
@@ -351,7 +387,20 @@ class mcp_utils:
                 factFieldTypes: { fieldName: { name, type, aiDescription } },
                 metricFieldTypes: { metricName: { name, type, dimensionsUsed, aiDescription } },
                 numDimensions: int,
-                numMetrics: int
+                numMetrics: int,
+                dashboardHints: {
+                  recommendedTimeDimension: str,
+                  recommendedMetrics: [str],
+                  fastQueryFields: [str],
+                  topNSupported: bool,
+                  maxRowsRecommended: int
+                },
+                fieldGroups: {
+                  timeFields: [str],
+                  locationFields: [str],
+                  productFields: [str],
+                  ... other semantic groups
+                }
               }, ...
             ]
         """
@@ -360,14 +409,146 @@ class mcp_utils:
                return json.dumps({"error": "Tenant not set"})
 
             driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
-            schema = driver.get_schema("inmydata.MCP.Server")
-            if schema is None:
+            schema_json = driver.get_schema("inmydata.MCP.Server")
+            if schema_json is None:
                 return json.dumps({"error": "No schema returned from get_schema"})
-            return schema
+            
+            # Parse the schema and enhance it with dashboard hints
+            try:
+                schema = json.loads(schema_json)
+                
+                # Enhance each subject with dashboard hints and field groups
+                if "subjects" in schema:
+                    for subject in schema["subjects"]:
+                        self._add_dashboard_hints(subject)
+                
+                return json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+            except json.JSONDecodeError:
+                # If schema is not valid JSON, return as-is
+                return schema_json
 
         except Exception as e:
             # Mirror your C# error string style
             return f"Error retrieving subjects: {e}"
+
+    def _add_dashboard_hints(self, subject: Dict[str, Any]) -> None:
+        """
+        Add dashboard hints and field groups to a subject based on field analysis.
+        Modifies the subject dict in-place.
+        """
+        fact_fields = subject.get("factFieldTypes", {})
+        metric_fields = subject.get("metricFieldTypes", {})
+        
+        # Categorize fields into semantic groups
+        time_fields = []
+        location_fields = []
+        product_fields = []
+        category_fields = []
+        identifier_fields = []
+        
+        # Common time field patterns
+        time_keywords = ["date", "time", "year", "month", "week", "quarter", "period", "day"]
+        # Common location field patterns
+        location_keywords = ["region", "country", "state", "city", "location", "store", "branch", "site", "territory"]
+        # Common product field patterns
+        product_keywords = ["product", "item", "sku", "article", "goods", "category", "brand"]
+        # Common category field patterns
+        category_keywords = ["type", "class", "group", "category", "segment", "division"]
+        # Common identifier patterns
+        id_keywords = ["id", "code", "number", "ref"]
+        
+        for field_name, field_info in fact_fields.items():
+            name_lower = field_name.lower()
+            
+            # Categorize by semantic meaning
+            if any(keyword in name_lower for keyword in time_keywords):
+                time_fields.append(field_name)
+            elif any(keyword in name_lower for keyword in location_keywords):
+                location_fields.append(field_name)
+            elif any(keyword in name_lower for keyword in product_keywords):
+                product_fields.append(field_name)
+            elif any(keyword in name_lower for keyword in category_keywords):
+                category_fields.append(field_name)
+            elif any(keyword in name_lower for keyword in id_keywords):
+                identifier_fields.append(field_name)
+        
+        # Build field groups (only include non-empty groups)
+        field_groups = {}
+        if time_fields:
+            field_groups["timeFields"] = time_fields
+        if location_fields:
+            field_groups["locationFields"] = location_fields
+        if product_fields:
+            field_groups["productFields"] = product_fields
+        if category_fields:
+            field_groups["categoryFields"] = category_fields
+        if identifier_fields:
+            field_groups["identifierFields"] = identifier_fields
+        
+        # Determine recommended time dimension (prefer Date > Week > Year > Month > Quarter)
+        time_priority = ["date", "week", "year", "month", "quarter", "period"]
+        recommended_time_dim = None
+        for priority_word in time_priority:
+            for field in time_fields:
+                if priority_word in field.lower():
+                    recommended_time_dim = field
+                    break
+            if recommended_time_dim:
+                break
+        
+        # If no specific match, just use first time field
+        if not recommended_time_dim and time_fields:
+            recommended_time_dim = time_fields[0]
+        
+        # Select recommended metrics (prioritize common business metrics)
+        metric_priority_keywords = [
+            "value", "amount", "revenue", "sales", "profit", "margin", "cost",
+            "quantity", "count", "total", "average", "sum"
+        ]
+        recommended_metrics = []
+        
+        # First pass: add metrics with priority keywords
+        for metric_name in metric_fields.keys():
+            metric_lower = metric_name.lower()
+            if any(keyword in metric_lower for keyword in metric_priority_keywords):
+                recommended_metrics.append(metric_name)
+                if len(recommended_metrics) >= 5:  # Limit to top 5
+                    break
+        
+        # If we don't have enough, add remaining metrics
+        if len(recommended_metrics) < 3:
+            for metric_name in metric_fields.keys():
+                if metric_name not in recommended_metrics:
+                    recommended_metrics.append(metric_name)
+                    if len(recommended_metrics) >= 3:
+                        break
+        
+        # Determine fast query fields (dimensions that are likely to be indexed/commonly used)
+        fast_query_fields = []
+        # Prefer time fields, then location, then product, then categories
+        fast_query_fields.extend(time_fields[:3])  # Top 3 time fields
+        fast_query_fields.extend(location_fields[:3])  # Top 3 location fields
+        fast_query_fields.extend(product_fields[:2])  # Top 2 product fields
+        
+        # Build dashboard hints
+        dashboard_hints = {
+            "topNSupported": True,  # All subjects support top N queries
+            "maxRowsRecommended": 5000
+        }
+        
+        if recommended_time_dim:
+            dashboard_hints["recommendedTimeDimension"] = recommended_time_dim
+        
+        if recommended_metrics:
+            dashboard_hints["recommendedMetrics"] = recommended_metrics
+        
+        if fast_query_fields:
+            dashboard_hints["fastQueryFields"] = fast_query_fields
+        
+        # Add to subject
+        subject["dashboardHints"] = dashboard_hints
+        if field_groups:
+            subject["fieldGroups"] = field_groups
 
     async def get_financial_periods(
         self,
