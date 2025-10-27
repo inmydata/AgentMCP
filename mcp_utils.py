@@ -594,26 +594,74 @@ class mcp_utils:
 
     async def get_calendar_period_date_range(
         self,
-        financial_year: int,
-        period_number: int,
-        period_type: str
+        financial_year: Optional[int] = None,
+        period_number: Optional[int] = None,
+        period_type: Optional[str] = None
     ) -> str:
         """
-        Get the start and end dates for a specific calendar period.
+        Get the start and end dates for a calendar period.
+
+        If no parameters provided, returns date range for the current period
+        (defaults to current month).
 
         Args:
-            financial_year: The financial year
-            period_number: The period number (e.g., month number, quarter number)
-            period_type: Type of period (year, month, quarter, week)
+            financial_year: The financial year (optional, defaults to current year)
+            period_number: The period number (optional, defaults to current period)
+            period_type: Type of period - 'year', 'month', 'quarter', 'week'
+                        (optional, defaults to 'month')
 
         Returns:
-            JSON string with start_date and end_date
+            JSON string with start_date, end_date, and period info
         """
         from inmydata.CalendarAssistant import CalendarAssistant, CalendarPeriodType
 
         try:
             if not self.tenant or not self.calendar:
                 return json.dumps({"error": "Tenant and Calendar variables must be set"})
+
+            # If any parameter is missing, use current financial period
+            if financial_year is None or period_number is None or period_type is None:
+                # Get current date's financial period info
+                current_periods_result = await self.get_financial_periods(None)
+                current_periods_data = json.loads(current_periods_result)
+                
+                if "error" in current_periods_data:
+                    return current_periods_result
+                
+                # Parse the periods JSON
+                periods_str = current_periods_data.get("periods", "{}")
+                try:
+                    periods = json.loads(periods_str) if isinstance(periods_str, str) else periods_str
+                except:
+                    periods = {}
+                
+                # Set defaults based on current periods
+                if financial_year is None:
+                    financial_year = periods.get("FinancialYear", periods.get("Year", 0))
+                
+                if period_type is None:
+                    period_type = "month"  # Default to month
+                
+                if period_number is None:
+                    # Use current period number based on period_type
+                    if period_type == "month":
+                        period_number = periods.get("Month", periods.get("Period", 1))
+                    elif period_type == "quarter":
+                        period_number = periods.get("Quarter", 1)
+                    elif period_type == "week":
+                        period_number = periods.get("Week", 1)
+                    elif period_type == "year":
+                        period_number = 1  # Year period number is typically 1
+                    else:
+                        return json.dumps({"error": f"Invalid period_type: {period_type}. Must be one of: year, month, quarter, week"})
+
+            # Validate we have all required values
+            if not financial_year:
+                return json.dumps({"error": "Could not determine financial_year"})
+            if not period_number:
+                return json.dumps({"error": "Could not determine period_number"})
+            if not period_type:
+                return json.dumps({"error": "Could not determine period_type"})
 
             assistant = CalendarAssistant(self.tenant, self.calendar, self.server, self.api_key)
 
