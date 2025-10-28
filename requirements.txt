@@ -1,5 +1,7 @@
 # Requirements generated from pyproject.toml (runtime deps)
 # Python 3.11+ recommended
+fastapi>=0.119.0
+fastmcp>=2.12.4
 inmydata>=0.0.17
 mcp>=1.15.0
 fastmcp==2.12.0
