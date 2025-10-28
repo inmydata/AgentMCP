@@ -48,6 +48,8 @@ app.mount("/mcp", mcp_app)
 
 async def get_tenant(token: str) -> str:
     access_token = await token_verifier.verify_token(token)
+    if access_token is None:
+        raise RuntimeError("Invalid token")
     return access_token.claims.get("imd_tenant", "")
 
 async def utils() -> mcp_utils:
@@ -148,7 +150,9 @@ async def get_answer_slow(
     try:
         if not question:
             return json.dumps({"error": "question parameter is required"})
-        return await (await utils()).get_answer(question, ctx)
+        if not ctx:
+            return json.dumps({"error": "context parameter is required"})
+        return await (await utils()).get_answer(question, ctx) # type: ignore
     
     except Exception as e:
         if ctx:
@@ -228,7 +232,7 @@ async def get_calendar_period_date_range(
     try:
         # If any parameter is None, fetch current financial periods
         if financial_year is None or period_number is None or period_type is None:
-            periods_result = await utils().get_financial_periods(None)
+            periods_result = await (await utils()).get_financial_periods(None)
             periods_data = json.loads(periods_result)
             
             if "error" in periods_data:

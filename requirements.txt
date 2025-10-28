@@ -4,8 +4,8 @@ fastapi>=0.119.0
 fastmcp>=2.12.4
 inmydata>=0.0.17
 mcp>=1.15.0
-fastmcp==2.12.0
 pandas>=2.3.3
 python-dotenv>=1.1.1
 # Used by server_remote.py to run the ASGI app
 uvicorn
+inmydata
