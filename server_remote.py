@@ -316,7 +316,7 @@ async def token_endpoint_post(request: Request):
     
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://auth-dev.inmydata.com/connect/token",
+            f"https://{INMYDATA_AUTH_SERVER}/connect/token",
             data=dict(form_data),
             headers=headers
         
