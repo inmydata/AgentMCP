@@ -35,12 +35,12 @@ async def main():
 
 
         # Execute operations
-        #result = await client.call_tool("get_schema", {})
-        #print(result)      
-        #result = await client.call_tool("get_financial_periods", {})
-        #print(result)
-        #result = await client.call_tool("get_calendar_period_date_range", {"financial_year":2023, "period_number":3, "period_type":"month"})
-        #print(result)
+        result = await client.call_tool("get_schema", {})
+        print(result)      
+        result = await client.call_tool("get_financial_periods", {})
+        print(result)
+        result = await client.call_tool("get_calendar_period_date_range", {"financial_year":2023, "period_number":3, "period_type":"month"})
+        print(result)
        
         async def get_answer_progress_handler(progress: float, total: float | None, message: str | None):
             print(f"Progress: {message}")

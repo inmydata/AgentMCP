@@ -52,6 +52,7 @@ async def get_tenant(token: str) -> str:
 
 async def utils() -> mcp_utils:
     try:
+        # Fetch headers and request (if available). Preference: query parameter 'tenant' > header 'x-inmydata-tenant'
         headers = get_http_headers()
         api_key = headers.get('authorization', '').replace('Bearer ', '')
         tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
@@ -65,8 +66,8 @@ async def utils() -> mcp_utils:
 
 @mcp.tool()
 async def get_rows_fast(
-    subject: str,
-    select: List[str],
+    subject: str = "",
+    select: Optional[List[str]] = None,
     where: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
@@ -83,19 +84,23 @@ async def get_rows_fast(
          )
 
     where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
-    Allowed ops: equals, contains, starts_with, gt, lt, gte, lte
+    Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
     """
     try:
+        if not subject:
+            return json.dumps({"error": "subject parameter is required"})
+        if not select:
+            return json.dumps({"error": "select parameter is required (list of field names)"})
         return await (await utils()).get_rows(subject, select, where)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
 async def get_top_n_fast(
-    subject: str,
-    group_by: str,
-    order_by: str,
-    n: int,
+    subject: str = "",
+    group_by: str = "",
+    order_by: str = "",
+    n: int = 10,
     where: Optional[List[Dict[str, Any]]] = None
 ) -> str:
    """
@@ -109,13 +114,19 @@ async def get_top_n_fast(
                    where=[{"field":"Financial Year","op":"equals","value":2025}])
     """
    try:
+       if not subject:
+           return json.dumps({"error": "subject parameter is required"})
+       if not group_by:
+           return json.dumps({"error": "group_by parameter is required"})
+       if not order_by:
+           return json.dumps({"error": "order_by parameter is required"})
        return await (await utils()).get_top_n(subject, group_by, order_by, n, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
 
 @mcp.tool()
 async def get_answer_slow(
-    question: str,
+    question: str = "",
     ctx: Optional[Context] = None
 ) -> str:
     """
@@ -135,6 +146,8 @@ async def get_answer_slow(
     from inmydata.ConversationalData import ConversationalDataDriver
     
     try:
+        if not question:
+            return json.dumps({"error": "question parameter is required"})
         return await (await utils()).get_answer(question, ctx)
     
     except Exception as e:
@@ -193,22 +206,59 @@ async def get_financial_periods(
 
 @mcp.tool()
 async def get_calendar_period_date_range(
-    financial_year: int,
-    period_number: int,
-    period_type: str
+    financial_year: Optional[int] = None,
+    period_number: Optional[int] = None,
+    period_type: Optional[str] = None
 ) -> str:
     """
     Get the start and end dates for a specific calendar period.
     
     Args:
-        financial_year: The financial year
-        period_number: The period number (e.g., month number, quarter number)
-        period_type: Type of period (year, month, quarter, week)
+        financial_year: The financial year (use null/None to automatically use current financial year)
+        period_number: The period number (e.g., month number, quarter number; use null/None to automatically use current period)
+        period_type: Type of period (year, month, quarter, week; use null/None to automatically use month)
+    
+    Note:
+        If financial_year, period_number, or period_type are null/None (defaults), this tool will automatically
+        fetch the current financial periods and use the appropriate values for today's date.
     
     Returns:
         JSON string with start_date and end_date
     """
     try:
+        # If any parameter is None, fetch current financial periods
+        if financial_year is None or period_number is None or period_type is None:
+            periods_result = await utils().get_financial_periods(None)
+            periods_data = json.loads(periods_result)
+            
+            if "error" in periods_data:
+                return periods_result
+            
+            # Parse the periods JSON
+            periods_str = periods_data.get("periods", "{}")
+            try:
+                periods = json.loads(periods_str) if isinstance(periods_str, str) else periods_str
+            except:
+                periods = {}
+            
+            # Auto-fill missing parameters from current periods
+            if financial_year is None:
+                financial_year = periods.get("FinancialYear", periods.get("Year", 0))
+            
+            if period_number is None:
+                # Default to current month if not specified
+                period_number = periods.get("Month", periods.get("Period", 1))
+            
+            if period_type is None:
+                period_type = "month"  # Default to month
+        
+        if not financial_year:
+            return json.dumps({"error": "Could not determine financial_year"})
+        if not period_number:
+            return json.dumps({"error": "Could not determine period_number"})
+        if not period_type:
+            return json.dumps({"error": "period_type parameter is required"})
+            
         return await (await utils()).get_calendar_period_date_range(financial_year, period_number, period_type)
     
     except Exception as e:
