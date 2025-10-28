@@ -6,22 +6,12 @@ from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalO
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Context
 from mcp_utils import mcp_utils
-import logging
-import sys
-
-
-
 
 load_dotenv(".env", override=True)
-
-
 
 mcp = FastMCP("inmydata-agent-server")
 
 def utils():
-    
-
-    
     try:
         api_key = os.environ.get('INMYDATA_API_KEY', "")
         tenant = os.environ.get('INMYDATA_TENANT', "")
@@ -29,30 +19,10 @@ def utils():
         calendar = os.environ.get('INMYDATA_CALENDAR',"default")
         user = os.environ.get('INMYDATA_USER', 'mcp-agent')
         session_id = os.environ.get('INMYDATA_SESSION_ID', 'mcp-session')
-        client_id = os.environ.get('INMYDATA_CLIENT_ID', '')
-        client_secret = os.environ.get('INMYDATA_CLIENT_SECRET', '')
-
-        api_key = GetClientCredentialsToken(client_id, client_secret, server) if client_id and client_secret else api_key
         
-
-
         return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
-
-def GetClientCredentialsToken(client_id: str, client_secret: str, server: str) -> str:
-    from oauthlib.oauth2 import BackendApplicationClient
-    from requests_oauthlib import OAuth2Session
-        # Create a logger specific to this class/instance
-    logger = logging.getLogger(f"{__name__}.mcp_utils")
-    logger.setLevel(logging.INFO)
-    logger.info("************* GETTING TOKEN: ")
-    client = BackendApplicationClient(client_id=client_id)
-    oauth = OAuth2Session(client=client)
-    token = oauth.fetch_token(token_url='https://auth.inmydata.com/connect/token', client_id=client_id,
-            client_secret=client_secret)
-    logger.info("************* TOKEN: " + token["access_token"])
-    return token["access_token"]
 
 @mcp.tool()
 async def get_rows_fast(
