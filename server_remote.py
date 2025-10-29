@@ -7,7 +7,7 @@ from fastmcp import FastMCP, Context
 from fastmcp.server.auth import RemoteAuthProvider
 from fastapi import FastAPI
 from mcp_utils import mcp_utils
-from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.dependencies import get_http_headers, get_http_request
 from pydantic import AnyHttpUrl
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -19,6 +19,7 @@ load_dotenv(".env", override=True)
 INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.ai')
 INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
 INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'https://auth.inmydata.com')
+INMYDATA_USE_OAUTH = os.environ.get('INMYDATA_USE_OAUTH', 'false').lower() == 'true'
 
 # Configure token validation for your identity provider
 token_verifier = JWTVerifier(
@@ -54,15 +55,47 @@ async def get_tenant(token: str) -> str:
 
 async def utils() -> mcp_utils:
     try:
-        # Fetch headers and request (if available). Preference: query parameter 'tenant' > header 'x-inmydata-tenant'
-        headers = get_http_headers()
-        api_key = headers.get('authorization', '').replace('Bearer ', '')
-        tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
-        server = headers.get('x-inmydata-server', "")
-        calendar = headers.get('x-inmydata-calendar', 'Default')
-        user = headers.get('x-inmydata-user', 'mcp-agent')
-        session_id = headers.get('x-inmydata-session-id', 'mcp-session')
-        return mcp_utils(api_key, tenant, calendar, user, session_id, server)
+        if INMYDATA_USE_OAUTH:
+            # OAuth flow - use bearer token and extract tenant from token
+            headers = get_http_headers()
+            api_key = headers.get('authorization', '').replace('Bearer ', '')
+            tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
+            server = headers.get('x-inmydata-server', "")
+            calendar = headers.get('x-inmydata-calendar', 'Default')
+            user = headers.get('x-inmydata-user', 'mcp-agent')
+            session_id = headers.get('x-inmydata-session-id', 'mcp-session')
+            return mcp_utils(api_key, tenant, calendar, user, session_id, server)
+        else:
+            # Legacy flow - use API key from headers or environment variables
+            # Fetch headers and request (if available). Preference: query parameter 'tenant' > header 'x-inmydata-tenant'
+            headers = get_http_headers()
+            tenant = ''
+            try:
+                req = get_http_request()
+                if req is not None:
+                    tenant = req.query_params.get('tenant', '')
+            except Exception:
+                # If get_http_request isn't available or fails, ignore and fall back to headers
+                tenant = ''
+
+            # Only use header tenant if query param not provided
+            if not tenant:
+                tenant = headers.get('x-inmydata-tenant', '')
+
+            # Check if we can pick up the api key for this tenant from env first, otherwise look for header
+            api_key = ""
+            if tenant.upper() + "_API_KEY" in os.environ:
+                api_key = os.environ.get(tenant.upper() + "_API_KEY", "")
+            else:
+                api_key = headers.get('x-inmydata-api-key', '')
+
+            server = headers.get('x-inmydata-server', '')
+            calendar = headers.get('x-inmydata-calendar', '')
+            if not calendar:
+                calendar = 'Default'
+            user = headers.get('x-inmydata-user', 'mcp-agent')
+            session_id = headers.get('x-inmydata-session-id', 'mcp-session')
+            return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
 
