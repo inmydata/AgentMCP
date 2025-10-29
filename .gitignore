@@ -31,3 +31,4 @@ htmlcov/
 .dmypy.json
 dmypy.json
 agentmcp.zip
+.claude
