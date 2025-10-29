@@ -24,7 +24,7 @@ INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'https://auth.inmy
 token_verifier = JWTVerifier(
     jwks_uri=f"https://{INMYDATA_AUTH_SERVER}/.well-known/openid-configuration/jwks",
     issuer=f"https://{INMYDATA_AUTH_SERVER}",
-    audience="inmydata.Web.API"
+    audience=f"https://{INMYDATA_MCP_HOST}/mcp"
 )
 
 # Define the auth server that the auth provider will use
@@ -48,9 +48,15 @@ app.mount("/mcp", mcp_app)
 
 async def get_tenant(token: str) -> str:
     access_token = await token_verifier.verify_token(token)
+
     if access_token is None:
         raise RuntimeError("Invalid token")
-    return access_token.claims.get("imd_tenant", "")
+
+    tenant = access_token.claims.get("client_imd_tenant")
+    # Fallback to imd_tenant if client_imd_tenant is not present
+    if not tenant:
+        tenant = access_token.claims.get("imd_tenant")
+    return tenant
 
 async def utils() -> mcp_utils:
     try:
@@ -272,7 +278,7 @@ async def get_calendar_period_date_range(
 @app.get("/.well-known/oauth-protected-resource/mcp")
 @app.get("/.well-known/oauth-protected-resource")
 def oauth_protected_resource():
-    return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Web.API"], "bearer_methods_supported": ["header"]}
+    return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]}
 
 # Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
 @app.get("/.well-known/oauth-authorization-server")
@@ -290,7 +296,7 @@ async def oauth_metadata():
           "scopes_supported": [
             "openid",
             "profile",
-            "inmydata.Web.API"
+            "inmydata.Developer.AI"
         ],
         "response_types_supported": ["code"],
         "token_endpoint_auth_methods_supported": ["client_secret_post"],
