@@ -27,8 +27,8 @@ def utils():
 @mcp.tool()
 async def get_rows_fast(
     subject: str = "",
-    select: Optional[List[str]] = None,
-    where: Optional[List[Dict[str, Any]]] = None,
+    select: List[str] = [],
+    where: List[Dict[str, Any]] = [],
     ctx: Optional[Context] = None
 ) -> str:
     """
@@ -62,7 +62,7 @@ async def get_top_n_fast(
     group_by: str = "",
     order_by: str = "",
     n: int = 10,
-    where: Optional[List[Dict[str, Any]]] = None,
+    where: List[Dict[str, Any]] = [],
     ctx: Optional[Context] = None
 ) -> str:
    """

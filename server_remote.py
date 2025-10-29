@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from mcp_utils import mcp_utils
 from fastmcp.server.dependencies import get_http_headers, get_http_request
 from pydantic import AnyHttpUrl
-
+from starlette.requests import Request
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 
 #get environment variables from .env file if available
@@ -41,11 +41,76 @@ auth = RemoteAuthProvider(
 )
 
 
-# Initialise FastMCP, and mount to FastAPI app that provides custom auth endpoints
-mcp = FastMCP(name="inmydata-agent-server", auth=auth)
-mcp_app = mcp.http_app("/")
-app = FastAPI(lifespan=mcp_app.lifespan)
-app.mount("/mcp", mcp_app)
+if INMYDATA_USE_OAUTH:
+    # Initialise FastMCP, and mount to FastAPI app that provides custom auth endpoints
+    mcp = FastMCP(name="inmydata-agent-server", auth=auth)
+    mcp_app = mcp.http_app("/")
+    app = FastAPI(lifespan=mcp_app.lifespan)
+    app.mount("/mcp", mcp_app)
+
+    #--- Custom OAuth endpoints ---
+    @app.get("/.well-known/oauth-protected-resource/mcp")
+    @app.get("/.well-known/oauth-protected-resource")
+    def oauth_protected_resource():
+        return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]}
+    # Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
+    @app.get("/.well-known/oauth-authorization-server")
+    @app.get("/.well-known/oauth-authorization-server/mcp")
+    @app.get("/.well-known/openid-configuration")
+    @app.get("/.well-known/openid-configuration/mcp")
+    @app.get("/mcp/.well-known/openid-configuration")
+    async def oauth_metadata():
+        return {
+            "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
+            "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
+            "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
+            "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+              "scopes_supported": [
+                "openid",
+                "profile",
+                "inmydata.Developer.AI"
+            ],
+            "response_types_supported": ["code"],
+            "token_endpoint_auth_methods_supported": ["client_secret_post"],
+             "revocation_endpoint": f"https://{INMYDATA_MCP_HOST}/revoke",
+             "revocation_endpoint_auth_methods_supported": [
+                "client_secret_post"
+            ],
+             "code_challenge_methods_supported": [
+                "S256"
+            ]
+        }
+
+    # For reasons I don't understand, connectors fail when going to the auth server's token endpoint directly.  This proxy seems to fix it.
+    @app.post("/connect/token")
+    async def token_endpoint_post(request: Request):
+        """Handle POST requests to the token endpoint"""
+        # Get form data from the request body
+        form_data = await request.form()
+
+        # Prepare headers for form data
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://{INMYDATA_AUTH_SERVER}/connect/token",
+                data=dict(form_data),
+                headers=headers
+
+            )
+
+            return JSONResponse(
+                content=response.json(),
+                status_code=response.status_code,
+                headers=dict(response.headers)
+            )    
+else:
+    # Initialise FastMCP without auth, and mount to FastAPI app
+    mcp = FastMCP(name="inmydata-agent-server")
+    app = mcp.streamable_http_app()
 
 async def get_tenant(token: str) -> str:
     access_token = await token_verifier.verify_token(token)
@@ -97,7 +162,8 @@ async def utils() -> mcp_utils:
             if tenant.upper() + "_API_KEY" in os.environ:
                 api_key = os.environ.get(tenant.upper() + "_API_KEY", "")
             else:
-                api_key = headers.get('x-inmydata-api-key', '')
+                api_key = headers.get('authorization', '').replace('Bearer ', '')
+        
 
             server = headers.get('x-inmydata-server', '')
             calendar = headers.get('x-inmydata-calendar', '')
@@ -105,6 +171,7 @@ async def utils() -> mcp_utils:
                 calendar = 'Default'
             user = headers.get('x-inmydata-user', 'mcp-agent')
             session_id = headers.get('x-inmydata-session-id', 'mcp-session')
+
             return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
@@ -112,8 +179,8 @@ async def utils() -> mcp_utils:
 @mcp.tool()
 async def get_rows_fast(
     subject: str = "",
-    select: Optional[List[str]] = None,
-    where: Optional[List[Dict[str, Any]]] = None
+    select: List[str] = [],
+    where: List[Dict[str, Any]] = []
 ) -> str:
     """
     FAST PATH (recommended).
@@ -146,7 +213,7 @@ async def get_top_n_fast(
     group_by: str = "",
     order_by: str = "",
     n: int = 10,
-    where: Optional[List[Dict[str, Any]]] = None
+    where: List[Dict[str, Any]] = []
 ) -> str:
    """
     FAST PATH for rankings and leaderboards.
@@ -311,80 +378,11 @@ async def get_calendar_period_date_range(
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-#--- Custom OAuth endpoints ---
-@app.get("/.well-known/oauth-protected-resource/mcp")
-@app.get("/.well-known/oauth-protected-resource")
-def oauth_protected_resource():
-    return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]}
-
-# Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
-@app.get("/.well-known/oauth-authorization-server")
-@app.get("/.well-known/oauth-authorization-server/mcp")
-@app.get("/.well-known/openid-configuration")
-@app.get("/.well-known/openid-configuration/mcp")
-@app.get("/mcp/.well-known/openid-configuration")
-async def oauth_metadata():
-    return {
-        "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
-        "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
-        "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
-        "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-          "scopes_supported": [
-            "openid",
-            "profile",
-            "inmydata.Developer.AI"
-        ],
-        "response_types_supported": ["code"],
-        "token_endpoint_auth_methods_supported": ["client_secret_post"],
-         "revocation_endpoint": f"https://{INMYDATA_MCP_HOST}/revoke",
-         "revocation_endpoint_auth_methods_supported": [
-            "client_secret_post"
-        ],
-         "code_challenge_methods_supported": [
-            "S256"
-        ]
-    }
-
-
-from starlette.requests import Request
-
-# For reasons I don't understand, connectors fail when going to the auth server's token endpoint directly.  This proxy seems to fix it.
-@app.post("/connect/token")
-async def token_endpoint_post(request: Request):
-    """Handle POST requests to the token endpoint"""
-    # Get form data from the request body
-    form_data = await request.form()
-    
-    # Prepare headers for form data
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"https://{INMYDATA_AUTH_SERVER}/connect/token",
-            data=dict(form_data),
-            headers=headers
-        
-        )
-        
-        return JSONResponse(
-            content=response.json(),
-            status_code=response.status_code,
-            headers=dict(response.headers)
-        )
-
-
-
-
-
 if __name__ == "__main__":
     import sys
     import uvicorn
     import httpx
     
-    transport = "streamable-http"
     port = 8000
     
     if len(sys.argv) > 1:
@@ -393,22 +391,20 @@ if __name__ == "__main__":
         if len(sys.argv) > 2:
             port = int(sys.argv[2])
     
-    print(f"Starting MCP server with {transport} transport on port {port}")
-    print("Credentials should be passed via headers:")
-    print("  Authorization: Your API key, prefixed with 'Bearer '.  Leav unset to trigger interactive login")
-    print("  x-inmydata-tenant: Your tenant name")
-    print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
-    print("  x-inmydata-calendar: Your calendar name")
-    print("  x-inmydata-user: User for events (optional, default: mcp-agent)")
-    print("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
-
-    
-    if transport == "sse":
-        #app = mcp.sse_app()
-        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
-    elif transport == "streamable-http":
-        #app = mcp.streamable_http_app()
-        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
+    if INMYDATA_USE_OAUTH:
+        print(f"Starting MCP server with OAuth and streamable-http transport on port {port}")
+        print("Connectors should use OAuth to authenticate via the /mcp endpoint.")
     else:
-        mcp.run(transport="stdio")
+        app = mcp.streamable_http_app()
+        print(f"Starting MCP server with streamable-http transport on port {port}")
+        print("Credentials should be passed via headers:")
+        print("  Authorization: Your API key, prefixed with 'Bearer '.  Leav unset to trigger interactive login")
+        print("  x-inmydata-tenant: Your tenant name")
+        print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
+        print("  x-inmydata-calendar: Your calendar name")
+        print("  x-inmydata-user: User for events (optional, default: mcp-agent)")
+        print("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
+    
+    uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
+
 
