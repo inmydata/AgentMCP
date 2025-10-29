@@ -38,6 +38,13 @@ Required environment variables (see `.env.example`):
 - `INMYDATA_USER` (optional) - User for chart events (default: mcp-agent)
 - `INMYDATA_SESSION_ID` (optional) - Session ID for chart events (default: mcp-session)
 
+### Remote Server Additional Configuration
+
+- `INMYDATA_USE_OAUTH` (optional) - Set to `true` to enable OAuth authentication, or `false`/unset for legacy API key authentication (default: false)
+- `INMYDATA_MCP_HOST` (optional) - MCP server host (default: mcp.inmydata.ai)
+- `INMYDATA_AUTH_SERVER` (optional) - OAuth authorization server URL (default: https://auth.inmydata.com)
+- `INMYDATA_SERVER` (optional) - inmydata server (default: inmydata.com)
+
 ## Usage
 
 ### Local Server (stdio transport)
@@ -73,16 +80,39 @@ The remote server:
 
 #### Authentication Options for Remote Server
 
-**Headers (traditional method):**
-- `x-inmydata-api-key`: Your inmydata API key
-- `x-inmydata-tenant`: Your tenant name
-- `x-inmydata-calendar`: Your calendar name
-- `x-inmydata-user` (optional): User for events (default: mcp-agent)
-- `x-inmydata-session-id` (optional): Session ID (default: mcp-session)
+The remote server supports two authentication modes, controlled by the `INMYDATA_USE_OAUTH` environment variable:
 
-**Query Parameters (new - takes precedence):**
+##### OAuth Authentication (INMYDATA_USE_OAUTH=true)
+
+When OAuth is enabled, the server uses bearer token authentication:
+
+- `Authorization: Bearer <token>` - OAuth access token
+- `x-inmydata-tenant` (optional) - Overrides tenant extracted from token
+- `x-inmydata-calendar` (optional) - Calendar name (default: Default)
+- `x-inmydata-user` (optional) - User for events (default: mcp-agent)
+- `x-inmydata-session-id` (optional) - Session ID (default: mcp-session)
+- `x-inmydata-server` (optional) - Server override
+
+The tenant is automatically extracted from the token's `client_imd_tenant` or `imd_tenant` claim.
+
+##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false or unset - default)
+
+When OAuth is disabled, the server uses traditional API key authentication:
+
+**Headers:**
+- `x-inmydata-api-key` - Your inmydata API key
+- `x-inmydata-tenant` - Your tenant name
+- `x-inmydata-calendar` (optional) - Calendar name (default: Default)
+- `x-inmydata-user` (optional) - User for events (default: mcp-agent)
+- `x-inmydata-session-id` (optional) - Session ID (default: mcp-session)
+- `x-inmydata-server` (optional) - Server override
+
+**Query Parameters (takes precedence over headers):**
 - `?tenant=your-tenant-name` - Overrides `x-inmydata-tenant` header if provided
-- API key can be auto-detected from environment variable `{TENANT}_API_KEY`
+
+**Environment Variable Lookup:**
+- API key can be auto-detected from environment variable `{TENANT}_API_KEY` (e.g., `ACME_API_KEY` for tenant "acme")
+- Falls back to `x-inmydata-api-key` header if env var not found
 
 See `deployment-guide.md` for detailed deployment instructions.
 
@@ -145,6 +175,12 @@ python -m pip install -r requirements.txt
 ```
 
 ## Recent Changes
+
+- **2025-10-29: Optional OAuth Authentication**
+  - **🔐 Configurable Auth Modes**: New `INMYDATA_USE_OAUTH` environment variable enables switching between OAuth and legacy API key authentication
+  - **🔄 Backward Compatible**: Defaults to legacy authentication (false) - existing deployments unaffected
+  - **🎯 Token-Based Auth**: When enabled, automatically extracts tenant from JWT claims (`client_imd_tenant` or `imd_tenant`)
+  - **🔑 Flexible Credentials**: Legacy mode supports environment variable lookup (`{TENANT}_API_KEY`), header-based API keys, and query parameter tenant override
 
 - **2025-10-27: Major LLM & Developer Experience Improvements**
   - **🔧 Flexible Parameters**: All tool parameters now optional with smart defaults - eliminates crashes from empty `{}` calls
