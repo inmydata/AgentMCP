@@ -57,6 +57,10 @@ async def get_tenant(token: str) -> str:
     # Fallback to imd_tenant if client_imd_tenant is not present
     if not tenant:
         tenant = access_token.claims.get("imd_tenant")
+    
+    if not tenant:
+        raise RuntimeError("No tenant information found in token")
+    
     return tenant
 
 async def utils() -> mcp_utils:
