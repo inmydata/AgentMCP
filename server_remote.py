@@ -4,35 +4,40 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP, Context
-from fastmcp.server.auth import RemoteAuthProvider
 from fastapi import FastAPI
 from mcp_utils import mcp_utils
 from fastmcp.server.dependencies import get_http_headers, get_http_request
 from pydantic import AnyHttpUrl
-from starlette.requests import Request
-from fastmcp.server.auth.providers.jwt import JWTVerifier
+from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 
 #get environment variables from .env file if available
 load_dotenv(".env", override=True)
 
 #get the following from environment variables:
-INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.ai')
+INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.com')
 INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
 INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'https://auth.inmydata.com')
 INMYDATA_USE_OAUTH = os.environ.get('INMYDATA_USE_OAUTH', 'false').lower() == 'true'
+INMYDATA_INTROSPECTION_CLIENT_ID = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_ID', '')
+INMYDATA_INTROSPECTION_CLIENT_SECRET = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_SECRET', '')
+INMYDATA_TOKEN_CACHE_TTL = int(os.environ.get('INMYDATA_TOKEN_CACHE_TTL', '300'))  # Default 5 minutes
 
-# Configure token validation for your identity provider
-token_verifier = JWTVerifier(
+# Configure token validation for your identity provider with PAT support
+token_verifier = PATAwareJWTVerifier(
     jwks_uri=f"https://{INMYDATA_AUTH_SERVER}/.well-known/openid-configuration/jwks",
     issuer=f"https://{INMYDATA_AUTH_SERVER}",
-    audience=f"https://{INMYDATA_MCP_HOST}/mcp"
+    audience=f"https://{INMYDATA_MCP_HOST}/mcp",
+    introspection_endpoint=f"https://{INMYDATA_AUTH_SERVER}/connect/introspect",
+    client_id=INMYDATA_INTROSPECTION_CLIENT_ID,
+    client_secret=INMYDATA_INTROSPECTION_CLIENT_SECRET,
+    cache_ttl_seconds=INMYDATA_TOKEN_CACHE_TTL
 )
 
 # Define the auth server that the auth provider will use
 auth_servers = [AnyHttpUrl(f"https://{INMYDATA_AUTH_SERVER}")]
 
 # Create the remote auth provider
-auth = RemoteAuthProvider(
+auth = PATSupportingRemoteAuthProvider(
     token_verifier=token_verifier,
     authorization_servers=auth_servers,
     base_url=f"https://{INMYDATA_MCP_HOST}"  # Your server base URL
@@ -378,6 +383,74 @@ async def get_calendar_period_date_range(
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+#--- Custom OAuth endpoints ---
+@app.get("/.well-known/oauth-protected-resource/mcp")
+@app.get("/.well-known/oauth-protected-resource")
+def oauth_protected_resource():
+    return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]}
+
+# Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
+@app.get("/.well-known/oauth-authorization-server")
+@app.get("/.well-known/oauth-authorization-server/mcp")
+@app.get("/.well-known/openid-configuration")
+@app.get("/.well-known/openid-configuration/mcp")
+@app.get("/mcp/.well-known/openid-configuration")
+async def oauth_metadata():
+    return {
+        "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
+        "authorization_endpoint": f"{INMYDATA_AUTH_SERVER}/connect/authorize",
+        "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
+        "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+          "scopes_supported": [
+            "openid",
+            "profile",
+            "inmydata.Developer.AI"
+        ],
+        "response_types_supported": ["code"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post"],
+         "revocation_endpoint": f"https://{INMYDATA_MCP_HOST}/revoke",
+         "revocation_endpoint_auth_methods_supported": [
+            "client_secret_post"
+        ],
+         "code_challenge_methods_supported": [
+            "S256"
+        ]
+    }
+
+
+from starlette.requests import Request
+
+# For reasons I don't understand, connectors fail when going to the auth server's token endpoint directly.  This proxy seems to fix it.
+@app.post("/connect/token")
+async def token_endpoint_post(request: Request):
+    """Handle POST requests to the token endpoint"""
+    # Get form data from the request body
+    form_data = await request.form()
+    
+    # Prepare headers for form data
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"https://{INMYDATA_AUTH_SERVER}/connect/token",
+            data=dict(form_data),
+            headers=headers
+        
+        )
+        
+        return JSONResponse(
+            content=response.json(),
+            status_code=response.status_code,
+            headers=dict(response.headers)
+        )
+
+
+
+
+
 if __name__ == "__main__":
     import sys
     import uvicorn
@@ -407,4 +480,22 @@ if __name__ == "__main__":
     
     uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
 
+    print(f"Starting MCP server with {transport} transport on port {port}")
+    print("Credentials should be passed via headers:")
+    print("  Authorization: Your API key, prefixed with 'Bearer '.  Leave unset to trigger interactive login")
+    print("  x-inmydata-tenant: Your tenant name")
+    print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
+    print("  x-inmydata-calendar: Your calendar name")
+    print("  x-inmydata-user: User for events (optional, default: mcp-agent)")
+    print("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
+
+    
+    if transport == "sse":
+        #app = mcp.sse_app()
+        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
+    elif transport == "streamable-http":
+        #app = mcp.streamable_http_app()
+        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
+    else:
+        mcp.run(transport="stdio")
 
