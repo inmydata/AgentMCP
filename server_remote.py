@@ -4,34 +4,40 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP, Context
-from fastmcp.server.auth import RemoteAuthProvider
 from fastapi import FastAPI
 from mcp_utils import mcp_utils
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import AnyHttpUrl
 
-from fastmcp.server.auth.providers.jwt import JWTVerifier
+from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 
 #get environment variables from .env file if available
 load_dotenv(".env", override=True)
 
 #get the following from environment variables:
-INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.ai')
+INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.com')
 INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
-INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'https://auth.inmydata.com')
+INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'auth.inmydata.com')
+INMYDATA_INTROSPECTION_CLIENT_ID = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_ID', '')
+INMYDATA_INTROSPECTION_CLIENT_SECRET = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_SECRET', '')
+INMYDATA_TOKEN_CACHE_TTL = int(os.environ.get('INMYDATA_TOKEN_CACHE_TTL', '300'))  # Default 5 minutes
 
-# Configure token validation for your identity provider
-token_verifier = JWTVerifier(
+# Configure token validation for your identity provider with PAT support
+token_verifier = PATAwareJWTVerifier(
     jwks_uri=f"https://{INMYDATA_AUTH_SERVER}/.well-known/openid-configuration/jwks",
     issuer=f"https://{INMYDATA_AUTH_SERVER}",
-    audience=f"https://{INMYDATA_MCP_HOST}/mcp"
+    audience=f"https://{INMYDATA_MCP_HOST}/mcp",
+    introspection_endpoint=f"https://{INMYDATA_AUTH_SERVER}/connect/introspect",
+    client_id=INMYDATA_INTROSPECTION_CLIENT_ID,
+    client_secret=INMYDATA_INTROSPECTION_CLIENT_SECRET,
+    cache_ttl_seconds=INMYDATA_TOKEN_CACHE_TTL
 )
 
 # Define the auth server that the auth provider will use
 auth_servers = [AnyHttpUrl(f"https://{INMYDATA_AUTH_SERVER}")]
 
 # Create the remote auth provider
-auth = RemoteAuthProvider(
+auth = PATSupportingRemoteAuthProvider(
     token_verifier=token_verifier,
     authorization_servers=auth_servers,
     base_url=f"https://{INMYDATA_MCP_HOST}"  # Your server base URL
@@ -289,7 +295,7 @@ def oauth_protected_resource():
 async def oauth_metadata():
     return {
         "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
-        "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
+        "authorization_endpoint": f"{INMYDATA_AUTH_SERVER}/connect/authorize",
         "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
         "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
         "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -358,7 +364,7 @@ if __name__ == "__main__":
     
     print(f"Starting MCP server with {transport} transport on port {port}")
     print("Credentials should be passed via headers:")
-    print("  Authorization: Your API key, prefixed with 'Bearer '.  Leav unset to trigger interactive login")
+    print("  Authorization: Your API key, prefixed with 'Bearer '.  Leave unset to trigger interactive login")
     print("  x-inmydata-tenant: Your tenant name")
     print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
     print("  x-inmydata-calendar: Your calendar name")
