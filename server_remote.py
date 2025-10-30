@@ -295,7 +295,7 @@ def oauth_protected_resource():
 async def oauth_metadata():
     return {
         "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
-        "authorization_endpoint": f"{INMYDATA_AUTH_SERVER}/connect/authorize",
+        "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
         "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
         "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
         "grant_types_supported": ["authorization_code", "refresh_token"],
