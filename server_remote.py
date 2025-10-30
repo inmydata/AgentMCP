@@ -398,7 +398,7 @@ if __name__ == "__main__":
         app = mcp.streamable_http_app()
         print(f"Starting MCP server with streamable-http transport on port {port}")
         print("Credentials should be passed via headers:")
-        print("  Authorization: Your API key, prefixed with 'Bearer '.  Leav unset to trigger interactive login")
+        print("  Authorization: Your API key, prefixed with 'Bearer '")
         print("  x-inmydata-tenant: Your tenant name")
         print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
         print("  x-inmydata-calendar: Your calendar name")
