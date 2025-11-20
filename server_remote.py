@@ -140,7 +140,7 @@ async def utils() -> mcp_utils:
             headers = get_http_headers()
             api_key = headers.get('authorization', '').replace('Bearer ', '')
             tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
-            server = headers.get('x-inmydata-server', "")
+            server = headers.get('x-inmydata-server', os.environ.get('INMYDATA_SERVER',"inmydata.com"))
             calendar = headers.get('x-inmydata-calendar', 'Default')
             user = headers.get('x-inmydata-user', 'mcp-agent')
             session_id = headers.get('x-inmydata-session-id', 'mcp-session')
