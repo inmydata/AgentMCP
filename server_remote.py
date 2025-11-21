@@ -9,6 +9,7 @@ from mcp_utils import mcp_utils
 from fastmcp.server.dependencies import get_http_headers, get_http_request
 from pydantic import AnyHttpUrl
 from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
+from starlette.requests import Request
 
 #get environment variables from .env file if available
 load_dotenv(".env", override=True)
@@ -383,79 +384,12 @@ async def get_calendar_period_date_range(
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-#--- Custom OAuth endpoints ---
-@app.get("/.well-known/oauth-protected-resource/mcp")
-@app.get("/.well-known/oauth-protected-resource")
-def oauth_protected_resource():
-    return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]}
-
-# Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
-@app.get("/.well-known/oauth-authorization-server")
-@app.get("/.well-known/oauth-authorization-server/mcp")
-@app.get("/.well-known/openid-configuration")
-@app.get("/.well-known/openid-configuration/mcp")
-@app.get("/mcp/.well-known/openid-configuration")
-async def oauth_metadata():
-    return {
-        "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
-        "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
-        "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
-        "registration_endpoint": f"https://{INMYDATA_AUTH_SERVER}/register",
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-          "scopes_supported": [
-            "openid",
-            "profile",
-            "inmydata.Developer.AI"
-        ],
-        "response_types_supported": ["code"],
-        "token_endpoint_auth_methods_supported": ["client_secret_post"],
-         "revocation_endpoint": f"https://{INMYDATA_MCP_HOST}/revoke",
-         "revocation_endpoint_auth_methods_supported": [
-            "client_secret_post"
-        ],
-         "code_challenge_methods_supported": [
-            "S256"
-        ]
-    }
-
-
-from starlette.requests import Request
-
-# For reasons I don't understand, connectors fail when going to the auth server's token endpoint directly.  This proxy seems to fix it.
-@app.post("/connect/token")
-async def token_endpoint_post(request: Request):
-    """Handle POST requests to the token endpoint"""
-    # Get form data from the request body
-    form_data = await request.form()
-    
-    # Prepare headers for form data
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"https://{INMYDATA_AUTH_SERVER}/connect/token",
-            data=dict(form_data),
-            headers=headers
-        
-        )
-        
-        return JSONResponse(
-            content=response.json(),
-            status_code=response.status_code,
-            headers=dict(response.headers)
-        )
-
-
-
-
 
 if __name__ == "__main__":
     import sys
     import uvicorn
     import httpx
-    
+
     port = 8000
     
     if len(sys.argv) > 1:
@@ -480,22 +414,4 @@ if __name__ == "__main__":
     
     uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
 
-    print(f"Starting MCP server with {transport} transport on port {port}")
-    print("Credentials should be passed via headers:")
-    print("  Authorization: Your API key, prefixed with 'Bearer '.  Leave unset to trigger interactive login")
-    print("  x-inmydata-tenant: Your tenant name")
-    print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
-    print("  x-inmydata-calendar: Your calendar name")
-    print("  x-inmydata-user: User for events (optional, default: mcp-agent)")
-    print("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
-
-    
-    if transport == "sse":
-        #app = mcp.sse_app()
-        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
-    elif transport == "streamable-http":
-        #app = mcp.streamable_http_app()
-        uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
-    else:
-        mcp.run(transport="stdio")
 
