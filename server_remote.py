@@ -114,9 +114,8 @@ if INMYDATA_USE_OAUTH:
                 headers=dict(response.headers)
             )    
 else:
-    # Initialise FastMCP without auth, and mount to FastAPI app
+    # Initialise FastMCP without auth
     mcp = FastMCP(name="inmydata-agent-server")
-    app = mcp.streamable_http_app()
 
 async def get_tenant(token: str) -> str:
     access_token = await token_verifier.verify_token(token)
@@ -402,6 +401,7 @@ if __name__ == "__main__":
         print(f"Starting MCP server with OAuth and streamable-http transport on port {port}")
         print("Connectors should use OAuth to authenticate via the /mcp endpoint.")
     else:
+        # Create the app after tools are registered
         app = mcp.streamable_http_app()
         print(f"Starting MCP server with streamable-http transport on port {port}")
         print("Credentials should be passed via headers:")
