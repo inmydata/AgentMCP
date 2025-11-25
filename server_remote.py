@@ -135,6 +135,16 @@ async def get_tenant(token: str) -> str:
 
 async def utils() -> mcp_utils:
     try:
+        # Get the type from the query string 
+        type = ''
+        try:
+            req = get_http_request()
+            if req is not None:
+                type = req.query_params.get('type', '')
+        except Exception:
+            # If get_http_request isn't available or fails, ignore and fall back to headers
+            type = ''
+
         if INMYDATA_USE_OAUTH:
             # OAuth flow - use bearer token and extract tenant from token
             headers = get_http_headers()
@@ -144,7 +154,8 @@ async def utils() -> mcp_utils:
             calendar = headers.get('x-inmydata-calendar', 'Default')
             user = headers.get('x-inmydata-user', 'mcp-agent')
             session_id = headers.get('x-inmydata-session-id', 'mcp-session')
-            return mcp_utils(api_key, tenant, calendar, user, session_id, server)
+            type = headers.get('x-inmydata-type', '')
+            return mcp_utils(api_key, tenant, calendar, user, session_id, server, type)
         else:
             # Legacy flow - use API key from headers or environment variables
             # Fetch headers and request (if available). Preference: query parameter 'tenant' > header 'x-inmydata-tenant'
@@ -169,15 +180,21 @@ async def utils() -> mcp_utils:
             else:
                 api_key = headers.get('authorization', '').replace('Bearer ', '')
         
-
             server = headers.get('x-inmydata-server', '')
+            if not server:
+                server = os.environ.get('INMYDATA_SERVER',"inmydata.com")
+            
+            type = headers.get('x-inmydata-type', '')
+            if not type:
+                type = os.environ.get('INMYDATA_TYPE',"")
+
             calendar = headers.get('x-inmydata-calendar', '')
             if not calendar:
                 calendar = 'Default'
             user = headers.get('x-inmydata-user', 'mcp-agent')
             session_id = headers.get('x-inmydata-session-id', 'mcp-session')
 
-            return mcp_utils(api_key, tenant, calendar, user, session_id, server)
+            return mcp_utils(api_key, tenant, calendar, user, session_id, server, type)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
 
@@ -185,7 +202,9 @@ async def utils() -> mcp_utils:
 async def get_rows_fast(
     subject: str = "",
     select: List[str] = [],
-    where: List[Dict[str, Any]] = []
+    where: List[Dict[str, Any]] = [],
+    summary: bool = True,
+    system: str = ""    
 ) -> str:
     """
     FAST PATH (recommended).
@@ -197,18 +216,22 @@ async def get_rows_fast(
       -> get_rows(
            subject="Sales",
            select=["Region", "Average Transaction Value", "Profit Margin %"],
-           where=[{"field":"Financial Year","op":"equals","value":2025}]
+           where=[{"field":"Financial Year","op":"equals","value":2025}],
+           summary=True,
+           system="sports2000"           
          )
 
     where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
     Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
+    The summary flag indicates if the data request should use a summary query which will summarize the data based on the fields specified. This is useful when datasets are large and summary=True is the default. If summary flag is set to false then it allows data to be read without being summarized.
+    The system property comes from the System property of the subject selected.    
     """
     try:
         if not subject:
             return json.dumps({"error": "subject parameter is required"})
         if not select:
             return json.dumps({"error": "select parameter is required (list of field names)"})
-        return await (await utils()).get_rows(subject, select, where)
+        return await (await utils()).get_rows(subject, select,summary,system, where)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -218,6 +241,7 @@ async def get_top_n_fast(
     group_by: str = "",
     order_by: str = "",
     n: int = 10,
+    system: str = "",
     where: List[Dict[str, Any]] = []
 ) -> str:
    """
@@ -227,7 +251,7 @@ async def get_top_n_fast(
 
     Example:
     - "Top 10 regions by profit margin in 2025"
-      -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10,
+      -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10, system="",
                    where=[{"field":"Financial Year","op":"equals","value":2025}])
     """
    try:
@@ -237,7 +261,7 @@ async def get_top_n_fast(
            return json.dumps({"error": "group_by parameter is required"})
        if not order_by:
            return json.dumps({"error": "order_by parameter is required"})
-       return await (await utils()).get_top_n(subject, group_by, order_by, n, where)
+       return await (await utils()).get_top_n(subject, group_by, order_by, n,system, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
 
@@ -292,7 +316,8 @@ async def get_schema() -> str:
             factFieldTypes: { fieldName: { name, type, aiDescription } },
             metricFieldTypes: { metricName: { name, type, dimensionsUsed, aiDescription } },
             numDimensions: int,
-            numMetrics: int
+            numMetrics: int,
+            system: str
           }, ...
         ]
     """

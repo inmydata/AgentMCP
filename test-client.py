@@ -15,7 +15,8 @@ transport = StreamableHttpTransport(
         "x-inmydata-server": os.environ.get('INMYDATA_SERVER',"inmydata.com"),
         "x-inmydata-calendar": os.environ.get('INMYDATA_CALENDAR',"default"),
         "x-inmydata-user": os.environ.get('INMYDATA_USER', 'mcp-agent'),
-        "x-inmydata-session-id": os.environ.get('INMYDATA_SESSION_ID', 'mcp-session')
+        "x-inmydata-session-id": os.environ.get('INMYDATA_SESSION_ID', 'mcp-session'),
+        "x-inmydata-session-id": os.environ.get('INMYDATA_TYPE', "")
     }
 )
 client = Client(transport)

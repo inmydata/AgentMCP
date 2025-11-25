@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import date, datetime
 import json
-from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalOperator, ConditionOperator, TopNOption
+from StructuredData import StructuredDataDriver, AIDataFilter, LogicalOperator, ConditionOperator, TopNOption
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import Context
 import asyncio
@@ -18,7 +18,8 @@ class mcp_utils:
             calendar: str,
             user: str,
             session_id: str,
-            server: Optional[str]):
+            server: Optional[str],
+            type: Optional[str]):
         self.api_key = api_key
         self.tenant = tenant
         self.calendar = calendar
@@ -29,7 +30,12 @@ class mcp_utils:
         else:
             self.server = server
 
-        print(f"Initialized mcp_utils with tenant={tenant}, calendar={calendar}, server={server}, user={user}, session_id={session_id}")
+        if not type:
+            self.type = ""
+        else:
+            self.type = type
+
+        print(f"Initialized mcp_utils with tenant={tenant}, calendar={calendar}, server={server}, user={user}, session_id={session_id}, type={type}")
         pass
 
 
@@ -221,11 +227,15 @@ class mcp_utils:
         self,
         subject: str,
         select: List[str],
+        summary: bool,
+        system: str,
         where: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """
         Retrieve rows with a simple AND-only filter list.
         where: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
+        summary: True
+        system: "sports2000"
         Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
         Returns records (<= limit) and total_count if available.
         """
@@ -233,9 +243,9 @@ class mcp_utils:
             if not self.tenant:
                 return json.dumps({"error": "Tenant not set"})
 
-            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
-            print(f"Calling get_rows with subject={subject}, fields={select}, where={where}")
-            rows = driver.get_data(subject, select, self.parse_where(where), None)
+            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key,self.type)
+            print(f"Calling get_rows with subject={subject}, fields={select}, where={where}, system={system}")
+            rows = driver.get_data(subject, select, self.parse_where(where),summary,system,None)
             if rows is None:
                 return json.dumps({"error": "No data returned from get_data"})
             
@@ -265,12 +275,14 @@ class mcp_utils:
         group_by: str,
         order_by: str,
         n: int,
+        system: str = "",
         where: Optional[List[Dict[str, Any]]] = None
     ) -> str:
        """
         Return top/bottom N groups by a metric.
         n>0 => top N, n<0 => bottom N.
         where uses the same shape as get_rows.
+        system: "sports2000"
         """
        try:
            if not self.tenant:
@@ -284,7 +296,7 @@ class mcp_utils:
            TopNOptions = {}
            TopNOptions[group_by] = TopN # Apply the Top N option to the group_by field
 
-           rows = driver.get_data(subject, [group_by, order_by], self.parse_where(where), TopNOptions)
+           rows = driver.get_data(subject, [group_by, order_by], self.parse_where(where),True,system, TopNOptions)
            if rows is None:
                return json.dumps({"error": "No data returned from get_top_n"})
            
@@ -303,6 +315,7 @@ class mcp_utils:
                "n": abs(n),
                "group_by": group_by,
                "order_by": order_by,
+               "system": system,
                "row_count": total_rows,
                "columns": list(map(str, rows.columns)),
                "data": records
@@ -387,6 +400,7 @@ class mcp_utils:
                 aiDescription: Optional[str],
                 factFieldTypes: { fieldName: { name, type, aiDescription } },
                 metricFieldTypes: { metricName: { name, type, dimensionsUsed, aiDescription } },
+                system: str,                
                 numDimensions: int,
                 numMetrics: int,
                 dashboardHints: {
@@ -409,7 +423,7 @@ class mcp_utils:
             if not self.tenant:
                return json.dumps({"error": "Tenant not set"})
 
-            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
+            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key, self.type)
             schema_json = driver.get_schema("inmydata.MCP.Server")
             if schema_json is None:
                 return json.dumps({"error": "No schema returned from get_schema"})
