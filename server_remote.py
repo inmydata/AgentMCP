@@ -61,7 +61,9 @@ if INMYDATA_USE_OAUTH:
                 "url": "https://mcp.inmydata.com/mcp"
             }
         }
-
+    @app.get("/")
+    async def root():
+        return {"status": "ok"}
 
     #--- Custom OAuth endpoints ---
     @app.get("/.well-known/oauth-protected-resource/mcp")
