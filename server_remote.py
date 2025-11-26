@@ -54,6 +54,15 @@ if INMYDATA_USE_OAUTH:
     app = FastAPI(lifespan=mcp_app.lifespan)
     app.mount("/mcp", mcp_app)
 
+    @app.get("/.well-known/mcp.json")
+    async def mcp_well_known():
+        return {
+            "mcp_server": {
+                "url": "https://mcp.inmydata.com/mcp"
+            }
+        }
+
+
     #--- Custom OAuth endpoints ---
     @app.get("/.well-known/oauth-protected-resource/mcp")
     @app.get("/.well-known/oauth-protected-resource")
