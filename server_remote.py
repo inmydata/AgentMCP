@@ -87,7 +87,7 @@ if INMYDATA_USE_OAUTH:
     @app.get("/.well-known/oauth-protected-resource/mcp")
     @app.get("/.well-known/oauth-protected-resource")
     def oauth_protected_resource():
-        return {"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]}
+        return JSONResponse(status_code=401, content={"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI"], "bearer_methods_supported": ["header"]})
     # Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
     @app.get("/.well-known/oauth-authorization-server")
     @app.get("/.well-known/oauth-authorization-server/mcp")
