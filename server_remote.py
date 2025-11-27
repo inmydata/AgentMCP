@@ -46,13 +46,30 @@ auth = PATSupportingRemoteAuthProvider(
     #allowed_client_redirect_uris=["http://localhost:*", "http://127.0.0.1:*","https://chatgpt.com/connector_platform_oauth_redirect", "https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]
 )
 
+class MCPPathRewriteMiddleware:
+    def __init__(self, app):
+        self.app = app
+    
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path") == "/mcp":
+            # Rewrite /mcp to /mcp/ at ASGI level
+            new_scope = dict(scope)
+            new_scope["path"] = "/mcp/"
+            new_scope["raw_path"] = b"/mcp/"
+            return await self.app(new_scope, receive, send)
+        return await self.app(scope, receive, send)
 
 if INMYDATA_USE_OAUTH:
     # Initialise FastMCP, and mount to FastAPI app that provides custom auth endpoints
     mcp = FastMCP(name="inmydata-agent-server", auth=auth)
     mcp_app = mcp.http_app("/")
+    #mcp_app.add_middleware(MCPPathRewriteMiddleware)
+
+     # Create the main FastAPI app and mount the MCP app
+
     app = FastAPI(lifespan=mcp_app.lifespan)
     app.mount("/mcp", mcp_app)
+    app.add_middleware(MCPPathRewriteMiddleware)
 
     @app.get("/.well-known/mcp.json")
     async def mcp_well_known():
@@ -64,7 +81,8 @@ if INMYDATA_USE_OAUTH:
     @app.get("/")
     async def root():
         return {"status": "ok"}
-
+    
+    
     #--- Custom OAuth endpoints ---
     @app.get("/.well-known/oauth-protected-resource/mcp")
     @app.get("/.well-known/oauth-protected-resource")
