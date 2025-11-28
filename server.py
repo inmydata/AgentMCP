@@ -19,8 +19,8 @@ def utils():
         calendar = os.environ.get('INMYDATA_CALENDAR',"default")
         user = os.environ.get('INMYDATA_USER', 'mcp-agent')
         session_id = os.environ.get('INMYDATA_SESSION_ID', 'mcp-session')
-        
-        return mcp_utils(api_key, tenant, calendar, user, session_id, server)
+        type = os.environ.get('INMYDATA_TYPE', '')
+        return mcp_utils(api_key, tenant, calendar, user, session_id, server,type)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
 
@@ -29,6 +29,8 @@ async def get_rows_fast(
     subject: str = "",
     select: List[str] = [],
     where: List[Dict[str, Any]] = [],
+    summary: bool = True,
+    system: str = "",    
     ctx: Optional[Context] = None
 ) -> str:
     """
@@ -41,18 +43,23 @@ async def get_rows_fast(
       -> get_rows(
            subject="Sales",
            select=["Region", "Average Transaction Value", "Profit Margin %"],
-           where=[{"field":"Financial Year","op":"equals","value":2025}]
+           where=[{"field":"Financial Year","op":"equals","value":2025}],
+           summary=True,
+           system=""           
          )
 
     where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
     Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
+    The summary flag indicates if the data request should use a summary query which will summarize the data based on the fields specified. This is useful when datasets are large and summary=True is the default. If summary flag is set to false then it allows data to be read without being summarized.
+    The system property comes from the System property of the subject selected it it has one.
+    The select list should only contain values that have keys in the factFieldTypes or metricFieldTypes dict of the selected subject    
     """
     try:
         if not subject:
             return json.dumps({"error": "subject parameter is required"})
         if not select:
             return json.dumps({"error": "select parameter is required (list of field names)"})
-        return await utils().get_rows(subject, select, where)
+        return await utils().get_rows(subject, select, summary, system, where)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -62,6 +69,7 @@ async def get_top_n_fast(
     group_by: str = "",
     order_by: str = "",
     n: int = 10,
+    system: str = "",
     where: List[Dict[str, Any]] = [],
     ctx: Optional[Context] = None
 ) -> str:
@@ -72,7 +80,7 @@ async def get_top_n_fast(
 
     Example:
     - "Top 10 regions by profit margin in 2025"
-      -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10,
+      -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10, system="",
                    where=[{"field":"Financial Year","op":"equals","value":2025}])
     """
    try:
@@ -82,7 +90,7 @@ async def get_top_n_fast(
            return json.dumps({"error": "group_by parameter is required"})
        if not order_by:
            return json.dumps({"error": "order_by parameter is required"})
-       return await utils().get_top_n(subject, group_by, order_by, n, where)
+       return await utils().get_top_n(subject, group_by, order_by, n,system, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
 
@@ -134,6 +142,7 @@ def get_schema() -> str:
             aiDescription: Optional[str],
             factFieldTypes: { fieldName: { name, type, aiDescription } },
             metricFieldTypes: { metricName: { name, type, dimensionsUsed, aiDescription } },
+            system: str,
             numDimensions: int,
             numMetrics: int
           }, ...
