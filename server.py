@@ -9,6 +9,14 @@ from mcp_utils import mcp_utils
 
 load_dotenv(".env", override=True)
 
+# Enable debug mode only when manually set
+if os.getenv("MCP_DEBUG", "0") == "1":
+    import debugpy
+    debugpy.listen(("localhost", 5678))
+    print("MCP server waiting for VS Code debugger on port 5678...")
+    debugpy.wait_for_client()
+    print("Debugger attached. Continuing execution.")
+
 mcp = FastMCP("inmydata-agent-server")
 
 def utils():
@@ -19,7 +27,6 @@ def utils():
         calendar = os.environ.get('INMYDATA_CALENDAR',"default")
         user = os.environ.get('INMYDATA_USER', 'mcp-agent')
         session_id = os.environ.get('INMYDATA_SESSION_ID', 'mcp-session')
-        
         return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
@@ -35,17 +42,28 @@ async def get_rows_fast(
     FAST PATH (recommended).
     Use when the request names specific fields and simple filters (no free-form reasoning).
     Returns rows immediately from the warehouse; far faster and cheaper than get_answer.
+    If the output json contains property row_count wil a value less than or equal
+    to 10 then the data property can be used as the answer. 
+    If the output json contains a non blank value for the instance_id property 
+    then the data property will only contain a sample of the data and the full data set 
+    can be found in a table named my_table in a DuckDB database file saved on disk. 
+    In that case you MUST use the query_results_fast tool to query the results with SQL
+    to get the data you need to answer the question. This is the only way to access larger datasets.    
 
     Examples:
     - "Give me the specific average transaction value and profit margin percentage for each region in 2025"
       -> get_rows(
            subject="Sales",
            select=["Region", "Average Transaction Value", "Profit Margin %"],
-           where=[{"field":"Financial Year","op":"equals","value":2025}]
+           where=[{"field":"Financial Year","op":"equals","value":2025, "logical":"AND"}],
          )
 
-    where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
+    where items: [{"field":"Region","op":"equals","value":"North","logical":"AND"}, {"field":"Sales Value","op":"gte","value":1000,"logical":"AND"}]
     Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
+    Allows logical: AND, OR (default is AND). This is the logical join between multiple conditions.
+    The summary flag indicates if the data request should use a summary query which will summarize the data based on the fields specified. This is useful when datasets are large and summary=True is the default. If summary flag is set to false then it allows data to be read without being summarized.
+    The system property comes from the value of the system key in the dict of the selected subject. It should ONLY come from that value. The value above is an example only.
+    The select list should only contain values that have keys in the factFieldTypes or metricFieldTypes dict of the selected subject    
     """
     try:
         if not subject:
@@ -69,11 +87,18 @@ async def get_top_n_fast(
     FAST PATH for rankings and leaderboards.
     Use when the user asks for "top/bottom N" by a metric (no free-form reasoning).
     Much faster and cheaper than get_answer.
+    If the output json contains property row_count wil a value less than or equal
+    to 10 then the data property can be used as the answer. 
+    If the output json contains a non blank value for the instance_id property 
+    then the data property will only contain a sample of the data and the full data set 
+    can be found in a table named my_table in a DuckDB database file saved on disk.  
+    In that case you MUST use the query_results_fast tool to query the results with SQL
+    to get the data you need to answer the question. This is the only way to access larger datasets.     
 
     Example:
     - "Top 10 regions by profit margin in 2025"
       -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10,
-                   where=[{"field":"Financial Year","op":"equals","value":2025}])
+                   where=[{"field":"Financial Year","op":"equals","value":2025,"logical":"AND"}])
     """
    try:
        if not subject:
@@ -85,6 +110,36 @@ async def get_top_n_fast(
        return await utils().get_top_n(subject, group_by, order_by, n, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
+   
+@mcp.tool()
+async def query_results_fast(
+    instance_id: str = "",
+    sql: str = "",
+    ctx: Optional[Context] = None
+) -> str:
+   """
+    FAST PATH for querying a result data set produced by other tools.
+    Use when the data set returned by another tool is over a specific number of rows.
+    This gives direct SQL access to the DuckDB database file saved on disk
+    allowing fast and cheap querying of the data.
+    Can be used to access larger datasets without needs further querying to get to an answer.
+    The only table in the database will be named my_table.
+    The columns will be the same as those returned by the tool that produced the dataset.
+    You will have a sample of the data in the data property of the output json from the tool that
+    produced the dataset.
+
+    Example:
+    - "Find the biggest difference between credit limit and balance"
+      -> query_results_fast(dataset_id="", instance_id="", sql="SELECT MAX(CreditLimit - Balance) AS MaxDifference FROM my_table;")
+    """
+   try:       
+       if not instance_id:
+           return json.dumps({"error": "instance_id parameter is required"})
+       if not sql:
+           return json.dumps({"error": "sql parameter is required"})
+       return await utils().query_results(instance_id, sql)
+   except Exception as e:
+       return json.dumps({"error": str(e)})    
 
 @mcp.tool()
 async def get_answer_slow(
@@ -116,7 +171,6 @@ async def get_answer_slow(
         if ctx:
             await ctx.error(f"Error in get_answer: {str(e)}")
         return json.dumps({"error": str(e)})
-
 
 @mcp.tool()
 def get_schema() -> str:

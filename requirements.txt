@@ -8,3 +8,4 @@ pandas>=2.3.3
 python-dotenv>=1.1.1
 # Used by server_remote.py to run the ASGI app
 uvicorn
+duckdb

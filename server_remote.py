@@ -197,9 +197,11 @@ async def utils() -> mcp_utils:
                 api_key = os.environ.get(tenant.upper() + "_API_KEY", "")
             else:
                 api_key = headers.get('authorization', '').replace('Bearer ', '')
-        
 
             server = headers.get('x-inmydata-server', '')
+            if not server:
+                server = os.environ.get('INMYDATA_SERVER',"inmydata.com")
+
             calendar = headers.get('x-inmydata-calendar', '')
             if not calendar:
                 calendar = 'Default'
@@ -220,16 +222,23 @@ async def get_rows_fast(
     FAST PATH (recommended).
     Use when the request names specific fields and simple filters (no free-form reasoning).
     Returns rows immediately from the warehouse; far faster and cheaper than get_answer.
+    If the output json contains property row_count wil a value less than or equal
+    to 10 then the data property can be used as the answer. 
+    If the output json contains a non blank value for the instance_id property 
+    then the data property will only contain a sample of the data and the full data set 
+    can be found in a table named my_table in a DuckDB database file saved on disk. 
+    In that case you MUST use the query_results_fast tool to query the results with SQL
+    to get the data you need to answer the question. This is the only way to access larger datasets.    
 
     Examples:
     - "Give me the specific average transaction value and profit margin percentage for each region in 2025"
       -> get_rows(
            subject="Sales",
            select=["Region", "Average Transaction Value", "Profit Margin %"],
-           where=[{"field":"Financial Year","op":"equals","value":2025}]
+           where=[{"field":"Financial Year","op":"equals","value":2025,"logical":"AND"}]
          )
 
-    where items: [{"field":"Region","op":"equals","value":"North"}, {"field":"Sales Value","op":"gte","value":1000}]
+    where items: [{"field":"Region","op":"equals","value":"North","logical":"AND"}, {"field":"Sales Value","op":"gte","value":1000,"logical":"AND"}]
     Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
     """
     try:
@@ -253,6 +262,13 @@ async def get_top_n_fast(
     FAST PATH for rankings and leaderboards.
     Use when the user asks for "top/bottom N" by a metric (no free-form reasoning).
     Much faster and cheaper than get_answer.
+    If the output json contains property row_count wil a value less than or equal
+    to 10 then the data property can be used as the answer. 
+    If the output json contains a non blank value for the instance_id property 
+    then the data property will only contain a sample of the data and the full data set 
+    can be found in a table named my_table in a DuckDB database file saved on disk.  
+    In that case you MUST use the query_results_fast tool to query the results with SQL
+    to get the data you need to answer the question. This is the only way to access larger datasets.     
 
     Example:
     - "Top 10 regions by profit margin in 2025"
@@ -269,6 +285,36 @@ async def get_top_n_fast(
        return await (await utils()).get_top_n(subject, group_by, order_by, n, where)
    except Exception as e:
        return json.dumps({"error": str(e)}) 
+   
+@mcp.tool()
+async def query_results_fast(
+    instance_id: str = "",
+    sql: str = "",
+    ctx: Optional[Context] = None
+) -> str:
+   """
+    FAST PATH for querying a result data set produced by other tools.
+    Use when the data set returned by another tool is over a specific number of rows.
+    This gives direct SQL access to the DuckDB database file saved on disk
+    allowing fast and cheap querying of the data.
+    Can be used to access larger datasets without needs further querying to get to an answer.
+    The only table in the database will be named my_table.
+    The columns will be the same as those returned by the tool that produced the dataset.
+    You will have a sample of the data in the data property of the output json from the tool that
+    produced the dataset.
+
+    Example:
+    - "Find the biggest difference between credit limit and balance"
+      -> query_results_fast(dataset_id="", instance_id="", sql="SELECT MAX(CreditLimit - Balance) AS MaxDifference FROM my_table;")
+    """
+   try:       
+       if not instance_id:
+           return json.dumps({"error": "instance_id parameter is required"})
+       if not sql:
+           return json.dumps({"error": "sql parameter is required"})
+       return await (await utils()).query_results(instance_id, sql)
+   except Exception as e:
+       return json.dumps({"error": str(e)})      
 
 @mcp.tool()
 async def get_answer_slow(
