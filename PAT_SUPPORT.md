@@ -141,6 +141,12 @@ If PAT authentication isn't working:
    - `client_id` (or `azp`)
    - `scope` (space-separated string or array)
    - `exp` (recommended for proper cache expiry)
+  
+Error: "Invalid Target"
+   - Did you specify the correct URL (e.g. https://mcp.inmydata.com/mcp)?
+   - Ensure '/mcp' is on the end of the URL
+   - Try with and without a trailing slash.  
+   - Don't try to pass query string parameters
 
 ### Performance Optimization
 
@@ -148,3 +154,4 @@ For long-lived PATs in high-traffic scenarios:
 - Increase `INMYDATA_TOKEN_CACHE_TTL` to reduce introspection requests
 - Monitor cache effectiveness through log messages ("Using cached introspection result")
 - Balance cache TTL against the need for timely revocation detection
+
