@@ -10,5 +10,12 @@
         "x-inmydata-session-id": "mcp-session"
       }
     }
+  },
+  "agenticRagEnvExample": {
+    "AGENTIC_RAG_BASE_URL": "https://rag.example.com",
+    "AGENTIC_RAG_PSK": "psk_live_replace_me",
+    "AGENTIC_RAG_DEFAULT_EXTERNAL_ID": "acme-prod (optional, non-OAuth only)",
+    "AGENTIC_RAG_TENANT_PREFIX": "inmydata- (optional, OAuth only)",
+    "AGENTIC_RAG_CACHE_FILE": "./agentic_rag_cache.json (optional)"
   }
 }

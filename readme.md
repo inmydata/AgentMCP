@@ -29,6 +29,10 @@ This is a Python web application that exposes the [inmydata agents SDK](https://
 - `get_financial_periods` - Get all financial periods (year, quarter, month, week) for a date
 - `get_calendar_period_date_range` - Get start/end dates for a calendar period. **Now supports smart defaults** - call with no parameters to get current month's date range
 
+#### Knowledge Base Tool
+
+- `agentic_rag_query` - Query a tenant's knowledge base in Agentic RAG with a natural-language question. Returns a grounded answer plus source chunk references. See [Agentic RAG query tool](#agentic-rag-query-tool) below.
+
 ## Configuration
 
 Required environment variables (see `.env.example`):
@@ -146,6 +150,31 @@ Enter the following in C:\Users\\\[USERNAME]\AppData\Roaming\Claude\claude_deskt
   }
 }
 ```
+
+## Agentic RAG query tool
+
+The `agentic_rag_query` tool lets an LLM query a tenant's knowledge base in Agentic RAG through this server. The MCP server holds a platform service key (`psk_live_...`), provisions or mints a per-tenant API key (`rak_live_...`) on first use, and caches it.
+
+### Environment variables
+
+| Var | Required | Purpose |
+|---|---|---|
+| `AGENTIC_RAG_BASE_URL` | Yes | Base URL of the Agentic RAG service, e.g. `https://rag.example.com`. |
+| `AGENTIC_RAG_PSK` | Yes | Platform service key. Never logged or surfaced to the LLM. |
+| `AGENTIC_RAG_DEFAULT_EXTERNAL_ID` | No | **Non-OAuth only.** If set, `external_id` is dropped from the tool schema. Ignored (with a warning) when `INMYDATA_USE_OAUTH=true`. |
+| `AGENTIC_RAG_TENANT_PREFIX` | No | **OAuth only.** Prepended to the JWT tenant claim when forming the `external_id`. Default: empty (1:1 mapping). Ignored when OAuth is off. |
+| `AGENTIC_RAG_CACHE_FILE` | No | Path to the persisted key cache. Default: `./agentic_rag_cache.json`. Written with mode `0600` on POSIX. |
+
+### Tenant binding
+
+- **OAuth mode (`INMYDATA_USE_OAUTH=true`)**: `external_id` is derived from the same JWT claim (`client_imd_tenant` / `imd_tenant`) the other tools use, optionally prefixed by `AGENTIC_RAG_TENANT_PREFIX`. The LLM cannot pass or override it.
+- **STDIO / legacy mode**: if `AGENTIC_RAG_DEFAULT_EXTERNAL_ID` is set, the LLM does not see the parameter; otherwise the LLM must pass `external_id`.
+
+### Cache file security
+
+The cache file contains plaintext tenant API keys so the server does not burn one of the 20-active-keys-per-tenant slots on every restart. On POSIX it is created with mode `0600`. On Windows there is no equivalent automatic ACL — place the file inside a directory that is ACL-restricted to the service account. The default path (`./agentic_rag_cache.json`) and its `.tmp` / `.corrupt.*` siblings are listed in `.gitignore`.
+
+If the file is deleted or a new replica starts without access to it, the first call per tenant re-mints a key. Over time that can exhaust the 20-key limit; on exhaustion the tool returns an operator-actionable error and an admin must revoke stale keys via the admin API.
 
 ## Deployment
 

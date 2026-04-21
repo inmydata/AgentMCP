@@ -1,5 +1,6 @@
 import json
 import os
+import httpx
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from fastapi.responses import JSONResponse
@@ -10,6 +11,7 @@ from fastmcp.server.dependencies import get_http_headers, get_http_request
 from pydantic import AnyHttpUrl
 from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 from starlette.requests import Request
+import agentic_rag_tool
 
 #get environment variables from .env file if available
 load_dotenv(".env", override=True)
@@ -459,10 +461,23 @@ async def get_calendar_period_date_range(
         return json.dumps({"error": str(e)})
 
 
+async def _rag_tenant_resolver() -> str:
+    headers = get_http_headers()
+    token = headers.get('authorization', '').replace('Bearer ', '')
+    tenant = headers.get('x-inmydata-tenant') or await get_tenant(token)
+    prefix = os.environ.get('AGENTIC_RAG_TENANT_PREFIX', '')
+    return f"{prefix}{tenant}"
+
+
+agentic_rag_tool.register(
+    mcp,
+    tenant_resolver=_rag_tenant_resolver if INMYDATA_USE_OAUTH else None,
+)
+
+
 if __name__ == "__main__":
     import sys
     import uvicorn
-    import httpx
 
     port = 8000
     

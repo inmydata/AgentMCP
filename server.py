@@ -6,6 +6,7 @@ from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalO
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Context
 from mcp_utils import mcp_utils
+import agentic_rag_tool
 
 load_dotenv(".env", override=True)
 
@@ -281,6 +282,9 @@ async def get_calendar_period_date_range(
     
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+agentic_rag_tool.register(mcp)
 
 
 if __name__ == "__main__":
