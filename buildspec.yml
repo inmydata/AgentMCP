@@ -11,13 +11,13 @@ phases:
   build:
     commands:
       - echo Building Docker image using buildx local builder...
-      - docker buildx build --load -t 921167706163.dkr.ecr.eu-west-1.amazonaws.com/agentmcp:Development .
+      - docker buildx build --load -t 921167706163.dkr.ecr.eu-west-1.amazonaws.com/agentmcp:Development1 .
   post_build:
     commands:
       - echo Pushing Docker image to ECR...
       - echo Logging in to Amazon ECR...
       - aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 921167706163.dkr.ecr.eu-west-1.amazonaws.com
-      - docker push 921167706163.dkr.ecr.eu-west-1.amazonaws.com/agentmcp:Development
+      - docker push 921167706163.dkr.ecr.eu-west-1.amazonaws.com/agentmcp:Development1
       - echo Docker image push completed.
 artifacts:
   files: []
