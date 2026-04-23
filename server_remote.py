@@ -466,7 +466,11 @@ async def _rag_tenant_resolver() -> str:
     token = headers.get('authorization', '').replace('Bearer ', '')
     tenant = headers.get('x-inmydata-tenant') or await get_tenant(token)
     prefix = os.environ.get('AGENTIC_RAG_TENANT_PREFIX', '')
-    return f"{prefix}{tenant}"
+    external_id = f"{prefix}{tenant}"
+    app_name = headers.get('x-inmydata-rag-app', '').strip()
+    if app_name:
+        external_id = f"{external_id} / {app_name}"
+    return external_id
 
 
 agentic_rag_tool.register(
