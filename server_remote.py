@@ -462,15 +462,13 @@ async def get_calendar_period_date_range(
 
 
 async def _rag_tenant_resolver() -> str:
+    # Must match LangChainMCPChat's `_external_id(tenant, app_name)` byte-for-byte
+    # (services/agentic_rag_service.py) so provision hits the same upstream row.
     headers = get_http_headers()
     token = headers.get('authorization', '').replace('Bearer ', '')
     tenant = headers.get('x-inmydata-tenant') or await get_tenant(token)
-    prefix = os.environ.get('AGENTIC_RAG_TENANT_PREFIX', '')
-    external_id = f"{prefix}{tenant}"
-    app_name = headers.get('x-inmydata-rag-app', '').strip()
-    if app_name:
-        external_id = f"{external_id} / {app_name}"
-    return external_id
+    app_name = headers.get('x-inmydata-rag-app', '').strip() or 'default'
+    return f"{tenant}:{app_name}"
 
 
 agentic_rag_tool.register(

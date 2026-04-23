@@ -8,6 +8,7 @@ Pure I/O — no FastMCP imports.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -38,14 +39,23 @@ class _TenantCreds:
     api_key: str
 
 
+_SLUG_PREFIX_MAX = 38  # leaves 11 chars for "_<10-hex>"
+_SLUG_MAX = 49
+
+
 def _slugify(external_id: str) -> str:
-    """Derive a slug matching ^[a-z][a-z0-9_]{1,48}$ from an external_id."""
-    s = re.sub(r"[^a-z0-9_]+", "_", external_id.lower()).strip("_")
-    if not s or not s[0].isalpha():
-        s = "t_" + s
-    if len(s) == 1:
-        s = s + "_x"
-    return s[:49]
+    """Derive a slug matching ^[a-z][a-z0-9_]{1,48}$ from an external_id.
+
+    Must stay byte-identical to LangChainMCPChat's `_slug` so that both
+    apps provisioning the same tenant produce the same slug and hit the
+    same upstream row.
+    """
+    prefix = re.sub(r"[^a-z0-9_]", "_", external_id.lower())
+    if not prefix or not prefix[0].isalpha():
+        prefix = "t_" + prefix
+    prefix = prefix[:_SLUG_PREFIX_MAX]
+    suffix = hashlib.sha256(external_id.encode()).hexdigest()[:10]
+    return f"{prefix}_{suffix}"[:_SLUG_MAX]
 
 
 def _is_key_limit_error(detail: str) -> bool:
