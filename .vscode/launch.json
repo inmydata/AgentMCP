@@ -9,6 +9,15 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": false
+        },
+        {
+            "name": "MCP Server (dev, port 8002)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/server_remote.py",
+            "args": ["streamable-http", "8002"],
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }
