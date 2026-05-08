@@ -12,6 +12,7 @@ from pydantic import AnyHttpUrl
 from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 from starlette.requests import Request
 import agentic_rag_tool
+import requests
 
 #get environment variables from .env file if available
 load_dotenv(".env", override=True)
@@ -19,7 +20,7 @@ load_dotenv(".env", override=True)
 #get the following from environment variables:
 INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.com')
 INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
-INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'auth.inmydata.com')
+INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'auth.'+INMYDATA_SERVER)
 INMYDATA_USE_OAUTH = os.environ.get('INMYDATA_USE_OAUTH', 'false').lower() == 'true'
 INMYDATA_INTROSPECTION_CLIENT_ID = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_ID', '')
 INMYDATA_INTROSPECTION_CLIENT_SECRET = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_SECRET', '')
@@ -171,7 +172,7 @@ async def utils() -> mcp_utils:
             headers = get_http_headers()
             api_key = headers.get('authorization', '').replace('Bearer ', '')
             tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
-            server = headers.get('x-inmydata-server', os.environ.get('INMYDATA_SERVER',"inmydata.com"))
+            server = headers.get('x-inmydata-server', await get_server())
             calendar = headers.get('x-inmydata-calendar', 'Default')
             user = headers.get('x-inmydata-user', 'mcp-agent')
             session_id = headers.get('x-inmydata-session-id', 'mcp-session')
@@ -202,7 +203,7 @@ async def utils() -> mcp_utils:
 
             server = headers.get('x-inmydata-server', '')
             if not server:
-                server = os.environ.get('INMYDATA_SERVER',"inmydata.com")
+                server = await get_server()
 
             calendar = headers.get('x-inmydata-calendar', '')
             if not calendar:
@@ -213,6 +214,10 @@ async def utils() -> mcp_utils:
             return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
         raise RuntimeError(f"Error initializing mcp_utils: {e}")
+    
+async def get_server() -> str:
+    server = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
+    return server
 
 @mcp.tool()
 async def get_rows_fast(
