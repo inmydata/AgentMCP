@@ -169,7 +169,7 @@ async def utils() -> mcp_utils:
     try:
         if INMYDATA_USE_OAUTH:
             # OAuth flow - use bearer token and extract tenant from token
-            headers = get_http_headers()
+            headers = get_http_headers(include={"authorization"})
             api_key = headers.get('authorization', '').replace('Bearer ', '')
             tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
             server = headers.get('x-inmydata-server', await get_server())
