@@ -248,5 +248,5 @@ class PATSupportingRemoteAuthProvider(RemoteAuthProvider):
         super().__init__(
             token_verifier=token_verifier,
             authorization_servers=authorization_servers,
-            resource_server_url=base_url
+            base_url=base_url
         )
