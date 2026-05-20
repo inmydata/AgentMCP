@@ -36,4 +36,3 @@ agentic_rag_cache.json
 agentic_rag_cache.json.corrupt.*
 agentic_rag_cache.json.tmp
 .env.bak
-thisisjustatest
