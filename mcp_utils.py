@@ -11,6 +11,7 @@ from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalO
 from typing import Optional, List, Dict, Any, Tuple
 from mcp.server.fastmcp import Context
 import asyncio
+from mcp_logging import logger
 
 
 
@@ -33,7 +34,8 @@ class mcp_utils:
         else:
             self.server = server
 
-        print(f"Initialized mcp_utils with tenant={tenant}, calendar={calendar}, server={server}, user={user}, session_id={session_id}")
+        logger.debug("Initialized mcp_utils with tenant=%s, calendar=%s, server=%s, user=%s, session_id=%s",
+                     tenant, calendar, server, user, session_id)
         pass
 
 
@@ -264,7 +266,7 @@ class mcp_utils:
         
         if total_rows > limit:
             instance_id = str(uuid.uuid4())
-            print(f"Warning: total_rows={total_rows} exceeds threshold; data may be truncated.")
+            logger.warning("total_rows=%d exceeds threshold; data may be truncated.", total_rows)
             
             # Create in-memory DuckDB and register the DataFrame
             duckdb_path = os.path.join(duckdblocation, f"{instance_id}.duckdb")
@@ -301,7 +303,7 @@ class mcp_utils:
                 return json.dumps({"error": "Tenant not set"})
 
             driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
-            print(f"Calling get_rows with subject={subject}, fields={select}, where={where}")
+            logger.debug("Calling get_rows with subject=%s, fields=%s, where=%s", subject, select, where)
             rows = driver.get_data(subject, select, self.parse_where(where), None)
             if rows is None:
                 return json.dumps({"error": "No data returned from get_data"})
@@ -311,9 +313,9 @@ class mcp_utils:
 
             rows, duckdb_file, instanceid = self.save_to_duckdb(rows=rows, total_rows=total_rows)
             if duckdb_file != "":
-                print(f"DuckDB database saved to: {duckdb_file}")
+                logger.debug("DuckDB database saved to: %s", duckdb_file)
             else:
-                print("Data did not exceed row limit; no DuckDB file created.")
+                logger.debug("Data did not exceed row limit; no DuckDB file created.")
                 instanceid = ""
             
             # Convert each cell to JSON-safe types
@@ -352,7 +354,8 @@ class mcp_utils:
                return json.dumps({"error": "Tenant not set"})
 
            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
-           print(f"Calling get_top_n with subject={subject}, group_by={group_by}, order_by={order_by}, n={n}, where={where}")
+           logger.debug("Calling get_top_n with subject=%s, group_by=%s, order_by=%s, n=%d, where=%s",
+                        subject, group_by, order_by, n, where)
 
            # Build a TopN filter to only show the Top 10 Sales People based on Sales Value
            TopN = TopNOption(order_by, n) # Field to order by and number of records to return (Positive for TopN, negative for BottomN)
@@ -368,9 +371,9 @@ class mcp_utils:
            rows, duckdb_file, instanceid = self.save_to_duckdb(rows=rows, total_rows=total_rows)
            
            if duckdb_file != "":
-               print(f"DuckDB database saved to: {duckdb_file}")
+               logger.debug("DuckDB database saved to: %s", duckdb_file)
            else:
-               print("Data did not exceed row limit; no DuckDB file created.")
+               logger.debug("Data did not exceed row limit; no DuckDB file created.")
                instanceid = ""
            
            # Convert each cell to JSON-safe types
@@ -409,9 +412,9 @@ class mcp_utils:
         call my_table in it.
         """
        try:
-           print(f"Calling query_results with instance_id={instance_id}, sql={sql}")
+           logger.debug("Calling query_results with instance_id=%s, sql=%s", instance_id, sql)
            duckdb_location = os.environ.get("MCP_DUCKDB_LOCATION", tempfile.gettempdir())
-           print(f"DuckDB file location: {os.path.join(duckdb_location, instance_id)}.duckdb")
+           logger.debug("DuckDB file location: %s", os.path.join(duckdb_location, instance_id) + ".duckdb")
            rows = None
            # Create connection
            con = duckdb.connect(os.path.join(duckdb_location, f"{instance_id}.duckdb"), read_only=False)
@@ -420,7 +423,7 @@ class mcp_utils:
              result = con.execute(sql)
              rows = result.df()   # Convert to pandas DataFrame
            except Exception as e:
-             print(f"DuckDB query failed: {str(e)}"  )
+             logger.debug("DuckDB query failed: %s", str(e))
            finally:
              con.close()  # Always close the connection
            
@@ -699,7 +702,6 @@ class mcp_utils:
             if not self.tenant or not self.calendar:
                 return json.dumps({"error": "Tenant and calendar must be set"})
 
-            print("Getting financial periods. API key =", self.api_key)
             assistant = CalendarAssistant(self.tenant, self.calendar, self.server, self.api_key)
 
             if target_date:

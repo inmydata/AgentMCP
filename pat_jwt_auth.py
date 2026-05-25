@@ -10,6 +10,7 @@ from typing import Optional, Dict, Tuple
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier, AccessToken
 from pydantic import AnyHttpUrl
+from mcp_logging import logger, token_fingerprint, redact
 
 
 class PATAwareJWTVerifier(JWTVerifier):
@@ -56,14 +57,15 @@ class PATAwareJWTVerifier(JWTVerifier):
                 return access_token
         except Exception as e:
             # JWT verification failed, might be a PAT
-            print(f"JWT verification failed: {e}. Attempting token introspection...")
+            logger.debug("JWT verification failed (fingerprint=%s, category=signature_invalid): %s. Attempting token introspection...",
+                         token_fingerprint(token), type(e).__name__)
         
         # If JWT verification failed and we have introspection configured, try introspection
         if self.introspection_endpoint:
             # Check cache first
             cached_token = self._get_cached_token(token)
             if cached_token is not None:
-                print("Using cached introspection result")
+                logger.debug("Using cached introspection result (fingerprint=%s)", token_fingerprint(token))
                 return cached_token
             
             # Cache miss, perform introspection
@@ -141,7 +143,7 @@ class PATAwareJWTVerifier(JWTVerifier):
             del self._introspection_cache[key]
         
         if expired_keys:
-            print(f"Cleaned up {len(expired_keys)} expired cache entries")
+            logger.debug("Cleaned up %d expired cache entries", len(expired_keys))
     
     async def _introspect_token(self, token: str) -> Optional[AccessToken]:
         """
@@ -154,7 +156,7 @@ class PATAwareJWTVerifier(JWTVerifier):
             AccessToken if introspection succeeds and token is active, None otherwise
         """
         if not self.introspection_endpoint:
-            print("No introspection endpoint configured")
+            logger.debug("No introspection endpoint configured")
             return None
         
         try:
@@ -183,14 +185,16 @@ class PATAwareJWTVerifier(JWTVerifier):
                 )
                 
                 if response.status_code != 200:
-                    print(f"Introspection failed with status {response.status_code}: {response.text}")
+                    logger.debug("Introspection failed (fingerprint=%s, category=network_error, status=%d): %s",
+                                 token_fingerprint(token), response.status_code, redact({"response": response.text}))
                     return None
                 
                 introspection_result = response.json()
                 
                 # Check if token is active
                 if not introspection_result.get("active", False):
-                    print("Token is not active according to introspection")
+                    logger.debug("Token is not active according to introspection (fingerprint=%s, category=introspection_inactive)",
+                                 token_fingerprint(token))
                     return None
                 
                 # Convert introspection result to AccessToken format
@@ -219,10 +223,12 @@ class PATAwareJWTVerifier(JWTVerifier):
                 return access_token
                 
         except httpx.HTTPError as e:
-            print(f"HTTP error during token introspection: {e}")
+            logger.debug("HTTP error during token introspection (fingerprint=%s, category=network_error): %s",
+                         token_fingerprint(token), type(e).__name__)
             return None
         except Exception as e:
-            print(f"Error during token introspection: {e}")
+            logger.debug("Error during token introspection (fingerprint=%s, category=network_error): %s",
+                         token_fingerprint(token), type(e).__name__)
             return None
 
 

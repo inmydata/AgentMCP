@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Context
 from mcp_utils import mcp_utils
 import agentic_rag_tool
+from mcp_logging import logger
 
 load_dotenv(".env", override=True)
 
@@ -14,9 +15,9 @@ load_dotenv(".env", override=True)
 if os.getenv("MCP_DEBUG", "0") == "1":
     import debugpy
     debugpy.listen(("localhost", 5678))
-    print("MCP server waiting for VS Code debugger on port 5678...")
+    logger.info("MCP server waiting for VS Code debugger on port 5678...")
     debugpy.wait_for_client()
-    print("Debugger attached. Continuing execution.")
+    logger.info("Debugger attached. Continuing execution.")
 
 mcp = FastMCP("inmydata-agent-server")
 
