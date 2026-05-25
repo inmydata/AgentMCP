@@ -14,7 +14,7 @@ from typing import Any
 logger = logging.getLogger("agentmcp")
 
 # Fields whose values must never appear in logs.
-_REDACT_KEYS = re.compile(r"token|secret|password|authorization", re.I)
+_REDACT_KEYS = re.compile(r"token|secret|password|authorization|api_key|bearer", re.I)
 _REDACTED = "<redacted>"
 
 
@@ -23,8 +23,13 @@ def token_fingerprint(token: str) -> str:
 
     Safe to include in log messages – it uniquely identifies the token for
     correlation purposes without exposing the value itself.
+
+    Note: SHA-256 is used here for *fingerprinting / correlation*, not for
+    secure password storage.  The goal is a short, collision-resistant
+    identifier that lets operators correlate log lines without leaking the
+    full credential.
     """
-    return hashlib.sha256(token.encode()).hexdigest()[:8]
+    return hashlib.sha256(token.encode()).hexdigest()[:8]  # nosec B324 – fingerprinting, not password hashing
 
 
 def redact(d: Any) -> Any:

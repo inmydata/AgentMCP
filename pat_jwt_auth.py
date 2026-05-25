@@ -185,8 +185,14 @@ class PATAwareJWTVerifier(JWTVerifier):
                 )
                 
                 if response.status_code != 200:
+                    # Attempt to parse response as JSON and redact sensitive fields;
+                    # fall back to logging only the status code if parsing fails.
+                    try:
+                        body = redact(response.json())
+                    except Exception:
+                        body = "<non-JSON response body redacted>"
                     logger.debug("Introspection failed (fingerprint=%s, category=network_error, status=%d): %s",
-                                 token_fingerprint(token), response.status_code, redact({"response": response.text}))
+                                 token_fingerprint(token), response.status_code, body)
                     return None
                 
                 introspection_result = response.json()
