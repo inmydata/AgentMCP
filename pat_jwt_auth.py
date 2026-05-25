@@ -178,7 +178,7 @@ class PATAwareJWTVerifier(JWTVerifier):
         if self.introspection_endpoint:
             # SHA-256 is used as a cache-key fingerprint only (not password storage).
             # The raw token is never stored; only its hash is used as the dict key.
-            token_hash = hashlib.sha256(token.encode()).hexdigest()  # nosec B324
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
             cache_status, cached_value = self._introspection_cache.get(token_hash)
 
             if cache_status == "hit_positive":

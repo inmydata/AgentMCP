@@ -86,7 +86,7 @@ When introspection is performed, the server:
 2. Checks the bounded LRU cache:
    - **Positive hit**: returns the stored `AccessToken` immediately (no network request)
    - **Negative hit**: returns `None` immediately (no network request) – short-circuits repeated invalid-token probes
-   - **Miss**: proceeds to the introspection endpoint
+   - **Miss**: proceeds through steps 3-8 below
 3. Sends a POST request to the introspection endpoint with the token and client credentials
 4. Validates the `active` flag in the response
 5. On `active: true` – extracts required fields and caches the result with effective expiry `min(now + PAT_CACHE_MAX_TTL, upstream_exp)`

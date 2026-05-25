@@ -123,7 +123,7 @@ class TestNegativeCache(unittest.TestCase):
             _, expiry = cache._cache[key]
             # Round to 3 decimal places to check for variance
             expiries.add(round(expiry, 3))
-        # With 20 entries and ±20 % jitter the expiries should not all be identical
+        # With 20 entries and +/-20% jitter the expiries should not all be identical
         self.assertGreater(len(expiries), 1)
 
 
