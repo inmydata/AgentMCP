@@ -155,6 +155,17 @@ else:
     # Initialise FastMCP without auth
     mcp = FastMCP(name="inmydata-agent-server")
 
+async def get_user(token: str) -> str:
+    access_token = await token_verifier.verify_token(token)
+
+    if access_token is None:
+        raise RuntimeError("Invalid token")
+    
+    user = access_token.claims.get("sub")
+    if not user:
+        raise RuntimeError("No user information found in token")
+    return user
+
 async def get_tenant(token: str) -> str:
     access_token = await token_verifier.verify_token(token)
 
@@ -177,10 +188,10 @@ async def utils() -> mcp_utils:
             # OAuth flow - use bearer token and extract tenant from token
             headers = get_http_headers(include={"authorization"})
             api_key = headers.get('authorization', '').replace('Bearer ', '')
-            tenant = headers.get('x-inmydata-tenant', await get_tenant(api_key))
+            tenant = await get_tenant(api_key)
             server = headers.get('x-inmydata-server', await get_server())
             calendar = headers.get('x-inmydata-calendar', 'Default')
-            user = headers.get('x-inmydata-user', 'mcp-agent')
+            user = await get_user(api_key)
             session_id = headers.get('x-inmydata-session-id', 'mcp-session')
             return mcp_utils(api_key, tenant, calendar, user, session_id, server)
         else:
@@ -494,7 +505,7 @@ async def _rag_tenant_resolver() -> str:
     # (services/agentic_rag_service.py) so provision hits the same upstream row.
     headers = get_http_headers()
     token = headers.get('authorization', '').replace('Bearer ', '')
-    tenant = headers.get('x-inmydata-tenant') or await get_tenant(token)
+    tenant = await get_tenant(token)
     app_name = headers.get('x-inmydata-rag-app', '').strip() or 'default'
     return f"{tenant}:{app_name}"
 
