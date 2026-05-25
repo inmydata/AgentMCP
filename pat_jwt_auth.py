@@ -3,13 +3,122 @@ Custom RemoteAuthProvider that supports both JWTs and Personal Access Tokens (PA
 When a PAT is detected (non-JWT), performs token introspection to get a valid JWT.
 Caches introspection results to avoid repeated requests for the same PAT.
 """
+import collections
+import hashlib
 import httpx
 import os
+import random
 import time
-from typing import Optional, Dict, Tuple
+from typing import Optional, Tuple
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier, AccessToken
 from pydantic import AnyHttpUrl
+
+
+class _BoundedTTLCache:
+    """
+    A bounded LRU cache with TTL support for PAT introspection results.
+
+    Supports positive (active token) and negative (inactive token) entries.
+    Uses an OrderedDict for O(1) LRU eviction.  Expired entries are lazily
+    removed on read; a periodic sweep runs when the cache size exceeds
+    half the configured maximum.
+
+    Cache entry types
+    -----------------
+    Positive entry : (AccessToken, expiry_timestamp)
+    Negative entry : (_NEGATIVE_SENTINEL, expiry_timestamp)
+    """
+
+    _NEGATIVE_SENTINEL = object()
+
+    def __init__(self, max_entries: int, max_positive_ttl: int, negative_ttl: int) -> None:
+        self._max_entries = max_entries
+        self._max_positive_ttl = max_positive_ttl
+        self._negative_ttl = negative_ttl
+        self._cache: collections.OrderedDict = collections.OrderedDict()
+        self._sweep_threshold = max(1, max_entries // 2)
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def get(self, key: str) -> Tuple[str, Optional[AccessToken]]:
+        """
+        Look up *key* in the cache.
+
+        Returns one of:
+          ``("hit_positive", access_token)`` – valid, active cached result.
+          ``("hit_negative", None)``          – cached negative (inactive) result.
+          ``("miss", None)``                  – not found or expired.
+        """
+        if key not in self._cache:
+            return ("miss", None)
+
+        value, expiry = self._cache[key]
+
+        if time.time() >= expiry:
+            del self._cache[key]
+            return ("miss", None)
+
+        # Promote to most-recently-used position
+        self._cache.move_to_end(key)
+
+        if value is self._NEGATIVE_SENTINEL:
+            return ("hit_negative", None)
+        return ("hit_positive", value)
+
+    def set_positive(self, key: str, access_token: AccessToken, upstream_exp: Optional[float]) -> None:
+        """
+        Cache a positive introspection result.
+
+        The effective TTL is ``min(now + max_positive_ttl, upstream_exp)`` so
+        that the local cache never outlives the token's actual expiry and is
+        also capped to prevent revocation lag on far-future ``exp`` values.
+        """
+        now = time.time()
+        effective_exp = now + self._max_positive_ttl
+        if upstream_exp is not None:
+            effective_exp = min(effective_exp, upstream_exp)
+
+        self._cache[key] = (access_token, effective_exp)
+        self._cache.move_to_end(key)
+        self._evict_if_needed()
+
+    def set_negative(self, key: str) -> None:
+        """
+        Cache a negative introspection result with a short TTL plus ±20 %
+        random jitter to avoid synchronised expiry across entries.
+        """
+        jitter = self._negative_ttl * 0.4 * (random.random() - 0.5)
+        expiry = time.time() + self._negative_ttl + jitter
+        self._cache[key] = (self._NEGATIVE_SENTINEL, expiry)
+        self._cache.move_to_end(key)
+        self._evict_if_needed()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _evict_if_needed(self) -> None:
+        """Enforce max-size via LRU eviction, then optionally sweep expired entries."""
+        while len(self._cache) > self._max_entries:
+            self._cache.popitem(last=False)
+
+        if len(self._cache) >= self._sweep_threshold:
+            self._sweep_expired()
+
+    def _sweep_expired(self) -> None:
+        """Remove all expired entries in a single pass."""
+        now = time.time()
+        expired_keys = [k for k, (_, exp) in self._cache.items() if now >= exp]
+        for k in expired_keys:
+            del self._cache[k]
+        if expired_keys:
+            print(f"Cache sweep: removed {len(expired_keys)} expired entries")
 
 
 class PATAwareJWTVerifier(JWTVerifier):
@@ -18,7 +127,7 @@ class PATAwareJWTVerifier(JWTVerifier):
     If the token is not a valid JWT, it performs token introspection.
     Caches introspection results to avoid repeated requests.
     """
-    
+
     def __init__(
         self,
         jwks_uri: str,
@@ -27,25 +136,32 @@ class PATAwareJWTVerifier(JWTVerifier):
         introspection_endpoint: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
-        cache_ttl_seconds: int = 300  # Default 5 minutes cache
+        cache_ttl_seconds: int = 300,  # kept for backward compatibility; see PAT_CACHE_MAX_TTL
     ):
         super().__init__(jwks_uri=jwks_uri, issuer=issuer, audience=audience)
         self.introspection_endpoint = introspection_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
         self.cache_ttl_seconds = cache_ttl_seconds
-        
-        # Cache format: {token_hash: (AccessToken, expiry_timestamp)}
-        self._introspection_cache: Dict[str, Tuple[AccessToken, float]] = {}
-    
+
+        max_positive_ttl = int(os.environ.get("PAT_CACHE_MAX_TTL", "3600"))
+        negative_ttl = int(os.environ.get("PAT_CACHE_NEGATIVE_TTL", "10"))
+        max_entries = int(os.environ.get("PAT_CACHE_MAX_ENTRIES", "1024"))
+
+        self._introspection_cache = _BoundedTTLCache(
+            max_entries=max_entries,
+            max_positive_ttl=max_positive_ttl,
+            negative_ttl=negative_ttl,
+        )
+
     async def verify_token(self, token: str) -> Optional[AccessToken]:
         """
         Verify a token. First tries JWT verification, then falls back to introspection.
         Caches introspection results to avoid repeated requests.
-        
+
         Args:
             token: The bearer token to verify (JWT or PAT)
-            
+
         Returns:
             AccessToken if valid, None otherwise
         """
@@ -57,91 +173,32 @@ class PATAwareJWTVerifier(JWTVerifier):
         except Exception as e:
             # JWT verification failed, might be a PAT
             print(f"JWT verification failed: {e}. Attempting token introspection...")
-        
+
         # If JWT verification failed and we have introspection configured, try introspection
         if self.introspection_endpoint:
-            # Check cache first
-            cached_token = self._get_cached_token(token)
-            if cached_token is not None:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            cache_status, cached_value = self._introspection_cache.get(token_hash)
+
+            if cache_status == "hit_positive":
                 print("Using cached introspection result")
-                return cached_token
-            
-            # Cache miss, perform introspection
+                return cached_value
+
+            if cache_status == "hit_negative":
+                print("Token previously found inactive (negative cache hit); skipping introspection")
+                return None
+
+            # Cache miss – perform introspection
             introspected_token = await self._introspect_token(token)
             if introspected_token is not None:
-                self._cache_token(token, introspected_token)
-            return introspected_token
-        
-        return None
-    
-    def _get_cached_token(self, token: str) -> Optional[AccessToken]:
-        """
-        Retrieve a cached introspection result if not expired.
-        
-        Args:
-            token: The token to look up
-            
-        Returns:
-            Cached AccessToken if valid and not expired, None otherwise
-        """
-        # Use hash of token as cache key to avoid storing full token in memory
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        
-        if token_hash in self._introspection_cache:
-            cached_token, expiry = self._introspection_cache[token_hash]
-            
-            # Check if cache entry has expired
-            if time.time() < expiry:
-                return cached_token
+                upstream_exp = introspected_token.claims.get("exp")
+                if not isinstance(upstream_exp, (int, float)):
+                    upstream_exp = None
+                self._introspection_cache.set_positive(token_hash, introspected_token, upstream_exp)
             else:
-                # Remove expired entry
-                del self._introspection_cache[token_hash]
-        
+                self._introspection_cache.set_negative(token_hash)
+            return introspected_token
+
         return None
-    
-    def _cache_token(self, token: str, access_token: AccessToken) -> None:
-        """
-        Cache an introspection result.
-        
-        Args:
-            token: The original token
-            access_token: The AccessToken to cache
-        """
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        
-        # Determine expiry time - use token's exp claim if available, otherwise use cache TTL
-        expiry_timestamp = time.time() + self.cache_ttl_seconds
-        
-        if "exp" in access_token.claims:
-            # Use the token's expiration if available
-            token_exp = access_token.claims["exp"]
-            if isinstance(token_exp, (int, float)):
-                # Don't cache beyond the token's actual expiration
-                expiry_timestamp = min(expiry_timestamp, token_exp)
-        
-        self._introspection_cache[token_hash] = (access_token, expiry_timestamp)
-        
-        # Simple cache cleanup: remove expired entries periodically
-        self._cleanup_expired_cache()
-    
-    def _cleanup_expired_cache(self) -> None:
-        """
-        Remove expired entries from the cache.
-        Called periodically during cache updates.
-        """
-        current_time = time.time()
-        expired_keys = [
-            key for key, (_, expiry) in self._introspection_cache.items()
-            if current_time >= expiry
-        ]
-        
-        for key in expired_keys:
-            del self._introspection_cache[key]
-        
-        if expired_keys:
-            print(f"Cleaned up {len(expired_keys)} expired cache entries")
     
     async def _introspect_token(self, token: str) -> Optional[AccessToken]:
         """

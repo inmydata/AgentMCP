@@ -20,9 +20,10 @@ This MCP server supports both JWT tokens and Personal Access Tokens (PATs) for a
 ### Caching Details
 
 - **Cache Key**: SHA-256 hash of the token (for security - full tokens aren't stored)
-- **Cache Duration**: Configurable via `INMYDATA_TOKEN_CACHE_TTL` (default: 300 seconds / 5 minutes)
-- **Cache Expiry**: Respects the token's `exp` claim if present, won't cache beyond actual expiration
-- **Automatic Cleanup**: Expired cache entries are automatically removed during cache operations
+- **Positive TTL cap**: Active token results are cached for at most `PAT_CACHE_MAX_TTL` seconds (default **3600 s / 1 hour**), regardless of the upstream `exp` claim. The effective expiry is `min(now + PAT_CACHE_MAX_TTL, upstream_exp)`.
+- **Negative cache**: Inactive (`active: false`) responses are cached for `PAT_CACHE_NEGATIVE_TTL` seconds (default **10 s**) with ±20 % jitter to avoid synchronised expiry. This prevents repeated introspection calls for invalid tokens.
+- **Bounded size**: The cache holds at most `PAT_CACHE_MAX_ENTRIES` entries (default **1024**). When full, the least-recently-used entry is evicted.
+- **Lazy expiry**: Entries are checked for expiry on read; a periodic sweep of all entries runs when the cache size exceeds half the maximum.
 - **Memory Efficient**: Only stores hash → (AccessToken, expiry_timestamp) pairs
 
 ## Configuration
@@ -38,10 +39,21 @@ INMYDATA_MCP_HOST=mcp.inmydata.com
 INMYDATA_INTROSPECTION_CLIENT_ID=your_client_id_here
 INMYDATA_INTROSPECTION_CLIENT_SECRET=your_client_secret_here
 
-# Token Cache TTL (in seconds) - how long to cache introspected PAT results
-# Default: 300 seconds (5 minutes)
-# Increase for better performance if PATs are long-lived
-INMYDATA_TOKEN_CACHE_TTL=300
+# ── PAT Introspection Cache ──────────────────────────────────────────────────
+# Maximum TTL (seconds) for a *positive* (active) cache entry.
+# The effective expiry is min(now + PAT_CACHE_MAX_TTL, upstream_exp).
+# Default: 3600 (1 hour)
+PAT_CACHE_MAX_TTL=3600
+
+# TTL (seconds) for a *negative* (inactive / revoked) cache entry.
+# A ±20 % jitter is applied automatically to avoid synchronised expiry.
+# Default: 10
+PAT_CACHE_NEGATIVE_TTL=10
+
+# Maximum number of entries in the in-process LRU cache.
+# The oldest (least-recently-used) entry is evicted when the limit is reached.
+# Default: 1024
+PAT_CACHE_MAX_ENTRIES=1024
 ```
 
 The introspection client credentials are used to authenticate with the auth server when validating PATs.
@@ -71,19 +83,20 @@ The PAT support is implemented through two custom classes:
 
 When introspection is performed, the server:
 1. Computes SHA-256 hash of the token
-2. Checks if hash exists in cache and isn't expired
-3. If cached, returns the stored `AccessToken` immediately
-4. If not cached, sends a POST request to the introspection endpoint
-5. Includes the token and client credentials
-6. Validates the `active` flag in the response
+2. Checks the bounded LRU cache:
+   - **Positive hit**: returns the stored `AccessToken` immediately (no network request)
+   - **Negative hit**: returns `None` immediately (no network request) – short-circuits repeated invalid-token probes
+   - **Miss**: proceeds to the introspection endpoint
+3. Sends a POST request to the introspection endpoint with the token and client credentials
+4. Validates the `active` flag in the response
+5. On `active: true` – extracts required fields and caches the result with effective expiry `min(now + PAT_CACHE_MAX_TTL, upstream_exp)`
+6. On `active: false` / error – caches a negative entry for `PAT_CACHE_NEGATIVE_TTL` seconds (±20 % jitter)
 7. Extracts required fields from the introspection result:
    - `client_id`: From `client_id` or `azp` claim (defaults to "unknown")
    - `scopes`: From `scope` claim (space-separated string or array)
    - `exp`: Token expiration timestamp
    - All other claims are stored in the `claims` dictionary
 8. Creates an `AccessToken` object with the required fields
-9. Caches the result using token hash as key
-10. Sets expiry based on token's `exp` claim or configured TTL (whichever is sooner)
 
 ### Expected Introspection Response Format
 
@@ -110,10 +123,11 @@ Required fields:
 
 ### Cache Management
 
-- Cache entries automatically expire based on TTL or token expiration
-- Expired entries are cleaned up during cache operations
-- No manual cache invalidation needed
-- Each PAT is only introspected once per cache TTL period
+- Cache entries automatically expire based on `PAT_CACHE_MAX_TTL` (positive) or `PAT_CACHE_NEGATIVE_TTL` (negative), always bounded by the token's own `exp` claim
+- The positive TTL cap is `min(now + PAT_CACHE_MAX_TTL, upstream_exp)` to limit revocation lag
+- Expired entries are lazily removed on lookup; a periodic sweep removes all stale entries when the cache size exceeds half the maximum
+- The cache is bounded to `PAT_CACHE_MAX_ENTRIES` entries; the least-recently-used entry is evicted when the limit is reached
+- No manual cache invalidation is needed
 
 ## Security Considerations
 
@@ -122,8 +136,9 @@ Required fields:
 - The introspection endpoint must be properly secured and only accept authenticated requests
 - Failed introspection attempts are logged but don't expose sensitive information
 - **Cache Security**: Full tokens are never stored in the cache - only SHA-256 hashes are used as keys
-- **Cache TTL**: Keep cache TTL reasonable to balance performance vs. security (default 5 minutes)
-- **Token Expiry**: Cache entries respect the token's actual expiration time
+- **Positive TTL cap**: `PAT_CACHE_MAX_TTL` (default 3600 s) bounds how long a revoked token can remain valid locally
+- **Negative cache**: `PAT_CACHE_NEGATIVE_TTL` (default 10 s) prevents an attacker from amplifying load on the IdP using unique invalid tokens
+- **Bounded memory**: `PAT_CACHE_MAX_ENTRIES` (default 1024) prevents unbounded memory growth; LRU eviction ensures the most recent tokens are retained
 
 ## Troubleshooting
 
@@ -151,7 +166,8 @@ Error: "Invalid Target"
 ### Performance Optimization
 
 For long-lived PATs in high-traffic scenarios:
-- Increase `INMYDATA_TOKEN_CACHE_TTL` to reduce introspection requests
+- `PAT_CACHE_MAX_TTL` controls the positive cache duration (default 3600 s = 1 hour)
 - Monitor cache effectiveness through log messages ("Using cached introspection result")
-- Balance cache TTL against the need for timely revocation detection
+- Tune `PAT_CACHE_MAX_ENTRIES` to trade memory for reduced introspection round-trips
+- Monitor negative-cache hits ("Token previously found inactive") to detect attack patterns
 
