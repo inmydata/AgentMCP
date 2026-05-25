@@ -503,7 +503,7 @@ if __name__ == "__main__":
         app = mcp.streamable_http_app()
         logger.info("Starting MCP server with streamable-http transport on port %d", port)
         logger.info("Credentials should be passed via headers:")
-        logger.info("  Authorization: HTTP Authorization header – value is your API key prefixed with the token type")
+        logger.info("  Authorization: HTTP Authorization header – value is your API key prefixed with the scheme")
         logger.info("  x-inmydata-tenant: Your tenant name")
         logger.info("  x-inmydata-server: Server name (optional, default: inmydata.com)")
         logger.info("  x-inmydata-calendar: Your calendar name")

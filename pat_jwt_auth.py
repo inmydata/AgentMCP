@@ -57,7 +57,7 @@ class PATAwareJWTVerifier(JWTVerifier):
                 return access_token
         except Exception as e:
             # JWT verification failed, might be a PAT
-            logger.debug("JWT verification failed (fingerprint=%s, category=signature_invalid): %s. Attempting token introspection...",
+            logger.debug("JWT verification failed (fingerprint=%s, category=jwt_verification_failed): %s. Attempting token introspection...",
                          token_fingerprint(token), type(e).__name__)
         
         # If JWT verification failed and we have introspection configured, try introspection

@@ -82,9 +82,18 @@ def _is_log_or_print_call(node: ast.Call) -> bool:
 def test_no_raw_sensitive_strings_in_log_arguments():
     """Log/print string arguments must not contain literal 'api_key', 'access_token', or 'bearer'.
 
+    These three patterns were specifically called out in the security issue as the
+    identifiers most likely to reveal credential values in logs.  The broader
+    ``_REDACT_KEYS`` pattern in ``mcp_logging.py`` (which also covers 'token',
+    'secret', 'password', 'authorization') is intentionally wider – it is applied
+    at runtime to strip fields from response dictionaries, whereas this compile-time
+    check focuses on the narrow set of names that historically appeared verbatim in
+    log strings.
+
     The only place allowed to reference these strings is mcp_logging.py itself
     (the redaction helper).
     """
+    # Matches the three specific identifiers called out in the security issue.
     _SENSITIVE = re.compile(r"\b(api_key|access_token|bearer)\b", re.I)
 
     offenders = []

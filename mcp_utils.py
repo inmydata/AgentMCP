@@ -414,7 +414,7 @@ class mcp_utils:
        try:
            logger.debug("Calling query_results with instance_id=%s, sql=%s", instance_id, sql)
            duckdb_location = os.environ.get("MCP_DUCKDB_LOCATION", tempfile.gettempdir())
-           logger.debug("DuckDB file location: %s", os.path.join(duckdb_location, instance_id) + ".duckdb")
+           logger.debug("DuckDB file location: %s", os.path.join(duckdb_location, f"{instance_id}.duckdb"))
            rows = None
            # Create connection
            con = duckdb.connect(os.path.join(duckdb_location, f"{instance_id}.duckdb"), read_only=False)
