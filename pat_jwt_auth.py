@@ -87,7 +87,7 @@ class _BoundedTTLCache:
 
     def set_negative(self, key: str) -> None:
         """
-        Cache a negative introspection result with a short TTL plus ±20 %
+        Cache a negative introspection result with a short TTL plus or minus 20 %
         random jitter to avoid synchronised expiry across entries.
         """
         jitter = self._negative_ttl * 0.4 * (random.random() - 0.5)
@@ -176,7 +176,9 @@ class PATAwareJWTVerifier(JWTVerifier):
 
         # If JWT verification failed and we have introspection configured, try introspection
         if self.introspection_endpoint:
-            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            # SHA-256 is used as a cache-key fingerprint only (not password storage).
+            # The raw token is never stored; only its hash is used as the dict key.
+            token_hash = hashlib.sha256(token.encode()).hexdigest()  # nosec B324
             cache_status, cached_value = self._introspection_cache.get(token_hash)
 
             if cache_status == "hit_positive":

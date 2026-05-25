@@ -114,7 +114,7 @@ class TestNegativeCache(unittest.TestCase):
         self.assertIsNone(value)
 
     def test_negative_ttl_has_jitter(self):
-        """Negative TTL entries should not all share the exact same expiry."""
+        """Negative TTL entries should not all share the exact same expiry (jitter applied)."""
         cache = _BoundedTTLCache(max_entries=100, max_positive_ttl=60, negative_ttl=10)
         expiries = set()
         for i in range(20):

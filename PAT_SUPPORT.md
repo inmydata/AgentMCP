@@ -21,7 +21,7 @@ This MCP server supports both JWT tokens and Personal Access Tokens (PATs) for a
 
 - **Cache Key**: SHA-256 hash of the token (for security - full tokens aren't stored)
 - **Positive TTL cap**: Active token results are cached for at most `PAT_CACHE_MAX_TTL` seconds (default **3600 s / 1 hour**), regardless of the upstream `exp` claim. The effective expiry is `min(now + PAT_CACHE_MAX_TTL, upstream_exp)`.
-- **Negative cache**: Inactive (`active: false`) responses are cached for `PAT_CACHE_NEGATIVE_TTL` seconds (default **10 s**) with ±20 % jitter to avoid synchronised expiry. This prevents repeated introspection calls for invalid tokens.
+- **Negative cache**: Inactive (`active: false`) responses are cached for `PAT_CACHE_NEGATIVE_TTL` seconds (default **10 s**) with +/-20 % jitter to avoid synchronised expiry. This prevents repeated introspection calls for invalid tokens.
 - **Bounded size**: The cache holds at most `PAT_CACHE_MAX_ENTRIES` entries (default **1024**). When full, the least-recently-used entry is evicted.
 - **Lazy expiry**: Entries are checked for expiry on read; a periodic sweep of all entries runs when the cache size exceeds half the maximum.
 - **Memory Efficient**: Only stores hash → (AccessToken, expiry_timestamp) pairs
@@ -46,7 +46,7 @@ INMYDATA_INTROSPECTION_CLIENT_SECRET=your_client_secret_here
 PAT_CACHE_MAX_TTL=3600
 
 # TTL (seconds) for a *negative* (inactive / revoked) cache entry.
-# A ±20 % jitter is applied automatically to avoid synchronised expiry.
+# A +/-20 % jitter is applied automatically to avoid synchronised expiry.
 # Default: 10
 PAT_CACHE_NEGATIVE_TTL=10
 
@@ -90,7 +90,7 @@ When introspection is performed, the server:
 3. Sends a POST request to the introspection endpoint with the token and client credentials
 4. Validates the `active` flag in the response
 5. On `active: true` – extracts required fields and caches the result with effective expiry `min(now + PAT_CACHE_MAX_TTL, upstream_exp)`
-6. On `active: false` / error – caches a negative entry for `PAT_CACHE_NEGATIVE_TTL` seconds (±20 % jitter)
+6. On `active: false` / error – caches a negative entry for `PAT_CACHE_NEGATIVE_TTL` seconds (+/-20 % jitter)
 7. Extracts required fields from the introspection result:
    - `client_id`: From `client_id` or `azp` claim (defaults to "unknown")
    - `scopes`: From `scope` claim (space-separated string or array)
