@@ -15,6 +15,7 @@ from mcp.server.fastmcp import Context
 import asyncio
 
 from mcp_logging import logger
+from errors import UserFacingError, tool_error_response
 
 
 class InvalidInstanceId(Exception):
@@ -293,7 +294,7 @@ class mcp_utils:
             return ConditionOperator.Equals
         key = str(op_raw).strip().lower()
         if key not in self._OP_ALIASES:
-            raise ValueError(f"Unsupported operator: {op_raw!r}")
+            raise UserFacingError(f"Unsupported operator: {op_raw!r}")
         return self._OP_ALIASES[key]
 
     def _normalize_logical_operator(self, logic_raw: Optional[str]) -> LogicalOperator:
@@ -301,7 +302,7 @@ class mcp_utils:
            return LogicalOperator.And
        key = str(logic_raw).strip().upper()
        if key not in self._LOGICAL_ALIASES:
-           raise ValueError(f"Unsupported logical operator: {logic_raw!r}")
+           raise UserFacingError(f"Unsupported logical operator: {logic_raw!r}")
        return self._LOGICAL_ALIASES[key]
     
     def is_int(self, s: str) -> bool:
@@ -331,7 +332,7 @@ class mcp_utils:
             # Accept a few common synonyms for keys
             field = item.get("field") or item.get("column") or item.get("name")
             if not field:
-                raise ValueError(f"Filter at index {i} is missing 'field'")
+                raise UserFacingError(f"Filter at index {i} is missing 'field'")
 
             op = self._normalize_condition_operator(item.get("op"))
             logic = self._normalize_logical_operator(item.get("logic") or item.get("logical"))
@@ -339,7 +340,7 @@ class mcp_utils:
             # Value rules:
             # - require presence (can be falsy like 0/""/False)
             if "value" not in item:
-                raise ValueError(f"Filter for field {field!r} requires 'value'")
+                raise UserFacingError(f"Filter for field {field!r} requires 'value'")
             value = item.get("value")
 
             # Grouping and case-sensitivity
@@ -448,8 +449,10 @@ class mcp_utils:
             }
             
             return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        except UserFacingError as exc:
+            return json.dumps({"error": str(exc)})
+        except Exception as exc:
+            return tool_error_response(exc, context="get_rows")
 
     async def get_top_n(
         self,
@@ -512,9 +515,11 @@ class mcp_utils:
            }
            
            return json.dumps(result, ensure_ascii=False)
-       except Exception as e:
-           return json.dumps({"error": str(e)}) 
-       
+       except UserFacingError as exc:
+           return json.dumps({"error": str(exc)})
+       except Exception as exc:
+           return tool_error_response(exc, context="get_top_n")
+
     async def query_results(
         self,
         instance_id: str,
@@ -557,9 +562,9 @@ class mcp_utils:
                 "data": records,
                 "instance_id": validated_id,
             }, ensure_ascii=False)
-        except Exception as e:
+        except Exception:
             logger.exception("query_results failed [%s] for instance_id=%s", correlation_id, validated_id)
-            return json.dumps({"error": f"query failed: {e}", "correlation_id": correlation_id})
+            return json.dumps({"error": "internal error", "correlation_id": correlation_id})
 
     async def get_answer(
         self,
@@ -615,10 +620,16 @@ class mcp_utils:
                 "question": question
             })
 
-        except Exception as e:
+        except UserFacingError as exc:
             if ctx:
-                await ctx.error(f"Error in get_answer: {str(e)}")
-            return json.dumps({"error": str(e)})
+                await ctx.error(str(exc))
+            return json.dumps({"error": str(exc)})
+        except Exception as exc:
+            response = tool_error_response(exc, context="get_answer")
+            if ctx:
+                cid = json.loads(response).get("correlation_id", "-")
+                await ctx.error(f"internal error (correlation_id: {cid})")
+            return response
 
 
     def get_schema(self) -> str:
@@ -677,9 +688,10 @@ class mcp_utils:
                 # If schema is not valid JSON, return as-is
                 return schema_json
 
-        except Exception as e:
-            # Mirror your C# error string style
-            return f"Error retrieving subjects: {e}"
+        except UserFacingError as exc:
+            return json.dumps({"error": str(exc)})
+        except Exception as exc:
+            return tool_error_response(exc, context="get_schema")
 
     def _add_dashboard_hints(self, subject: Dict[str, Any]) -> None:
         """
@@ -836,8 +848,10 @@ class mcp_utils:
 
             return json.dumps({"periods": serializable, "date": dt.isoformat()})
 
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        except UserFacingError as exc:
+            return json.dumps({"error": str(exc)})
+        except Exception as exc:
+            return tool_error_response(exc, context="get_financial_periods")
 
 
     async def get_calendar_period_date_range(
@@ -937,6 +951,8 @@ class mcp_utils:
                 "period_type": period_type
             })
 
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        except UserFacingError as exc:
+            return json.dumps({"error": str(exc)})
+        except Exception as exc:
+            return tool_error_response(exc, context="get_calendar_period_date_range")
 

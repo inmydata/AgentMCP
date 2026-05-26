@@ -12,6 +12,7 @@ from pydantic import AnyHttpUrl
 from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 from starlette.requests import Request
 from mcp_logging import configure_logging, logger
+from errors import UserFacingError, tool_error_response
 import agentic_rag_tool
 import requests
 
@@ -218,7 +219,7 @@ async def utils() -> mcp_utils:
 
             return mcp_utils(api_key, tenant, calendar, user, session_id, server)
     except Exception as e:
-        raise RuntimeError(f"Error initializing mcp_utils: {e}")
+        raise RuntimeError("Error initializing mcp_utils") from e
     
 async def get_server() -> str:
     server = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
@@ -259,8 +260,10 @@ async def get_rows_fast(
         if not select:
             return json.dumps({"error": "select parameter is required (list of field names)"})
         return await (await utils()).get_rows(subject, select, where)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    except UserFacingError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return tool_error_response(exc, context="get_rows_fast")
 
 @mcp.tool()
 async def get_top_n_fast(
@@ -295,8 +298,10 @@ async def get_top_n_fast(
        if not order_by:
            return json.dumps({"error": "order_by parameter is required"})
        return await (await utils()).get_top_n(subject, group_by, order_by, n, where)
-   except Exception as e:
-       return json.dumps({"error": str(e)}) 
+   except UserFacingError as exc:
+       return json.dumps({"error": str(exc)})
+   except Exception as exc:
+       return tool_error_response(exc, context="get_top_n_fast")
    
 @mcp.tool()
 async def query_results_fast(
@@ -325,8 +330,10 @@ async def query_results_fast(
        if not sql:
            return json.dumps({"error": "sql parameter is required"})
        return await (await utils()).query_results(instance_id, sql)
-   except Exception as e:
-       return json.dumps({"error": str(e)})      
+   except UserFacingError as exc:
+       return json.dumps({"error": str(exc)})
+   except Exception as exc:
+       return tool_error_response(exc, context="query_results_fast")
 
 @mcp.tool()
 async def get_answer_slow(
@@ -355,11 +362,17 @@ async def get_answer_slow(
         if not ctx:
             return json.dumps({"error": "context parameter is required"})
         return await (await utils()).get_answer(question, ctx) # type: ignore
-    
-    except Exception as e:
+
+    except UserFacingError as exc:
         if ctx:
-            await ctx.error(f"Error in get_answer: {str(e)}")
-        return json.dumps({"error": str(e)})
+            await ctx.error(str(exc))
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        response = tool_error_response(exc, context="get_answer_slow")
+        if ctx:
+            cid = json.loads(response).get("correlation_id", "-")
+            await ctx.error(f"internal error (correlation_id: {cid})")
+        return response
 
 
 @mcp.tool()
@@ -386,9 +399,10 @@ async def get_schema() -> str:
     try:
         return (await utils()).get_schema()
 
-    except Exception as e:
-        # Mirror your C# error string style
-        return f"Error retrieving subjects: {e}"
+    except UserFacingError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return tool_error_response(exc, context="get_schema")
 
 @mcp.tool()
 async def get_financial_periods(
@@ -405,9 +419,11 @@ async def get_financial_periods(
     """
     try:
         return await (await utils()).get_financial_periods(target_date)
-    
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+
+    except UserFacingError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return tool_error_response(exc, context="get_financial_periods")
 
 
 @mcp.tool()
@@ -466,9 +482,11 @@ async def get_calendar_period_date_range(
             return json.dumps({"error": "period_type parameter is required"})
             
         return await (await utils()).get_calendar_period_date_range(financial_year, period_number, period_type)
-    
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+
+    except UserFacingError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return tool_error_response(exc, context="get_calendar_period_date_range")
 
 
 async def _rag_tenant_resolver() -> str:
