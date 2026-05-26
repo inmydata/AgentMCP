@@ -1,7 +1,10 @@
 from decimal import Decimal
+import logging
 import os
+import re
 import tempfile
 import uuid
+from pathlib import Path
 import duckdb
 import pandas as pd
 import numpy as np
@@ -12,6 +15,128 @@ from typing import Optional, List, Dict, Any, Tuple
 from mcp.server.fastmcp import Context
 import asyncio
 
+
+logger = logging.getLogger(__name__)
+
+
+class InvalidInstanceId(Exception):
+    """Raised when instance_id is not a well-formed UUID or resolves outside the configured DuckDB directory."""
+
+
+class UnsafeSql(Exception):
+    """Raised when caller-supplied SQL begins with a statement keyword that can reach outside the sandbox (file/network/extensions/config)."""
+
+
+_INSTANCE_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+_BLOCKED_LEAD_KEYWORDS = frozenset({
+    "ATTACH", "DETACH",
+    "COPY",
+    "INSTALL", "LOAD",
+    "PRAGMA",
+    "EXPORT", "IMPORT",
+    "USE",
+    "CHECKPOINT",
+    "SET", "RESET",
+})
+
+_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _get_duckdb_base_location() -> Path:
+    """Resolved base directory for per-instance DuckDB files."""
+    return Path(os.environ.get("MCP_DUCKDB_LOCATION", tempfile.gettempdir())).resolve()
+
+
+def _validate_instance_id(instance_id: str) -> str:
+    if not isinstance(instance_id, str) or not _INSTANCE_ID_RE.match(instance_id):
+        raise InvalidInstanceId("instance_id is not a valid UUID")
+    try:
+        uuid.UUID(instance_id)
+    except (ValueError, AttributeError, TypeError) as e:
+        raise InvalidInstanceId("instance_id is not a valid UUID") from e
+    return instance_id
+
+
+def _resolve_duckdb_path(instance_id: str) -> Path:
+    base = _get_duckdb_base_location()
+    candidate = (base / f"{instance_id}.duckdb").resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError as e:
+        raise InvalidInstanceId("instance_id resolves outside the configured DuckDB directory") from e
+    return candidate
+
+
+def _open_sandboxed_connection(path, read_only: bool = False):
+    """Open a DuckDB connection with file/network access disabled and configuration locked so caller SQL cannot re-enable them."""
+    con = duckdb.connect(str(path), read_only=read_only)
+    try:
+        con.execute("SET enable_external_access=false;")
+        con.execute("SET allow_unsigned_extensions=false;")
+        con.execute("SET lock_configuration=true;")
+    except Exception:
+        con.close()
+        raise
+    return con
+
+
+def _strip_sql_comments(sql: str) -> str:
+    sql = _BLOCK_COMMENT_RE.sub(" ", sql)
+    sql = _LINE_COMMENT_RE.sub(" ", sql)
+    return sql
+
+
+def _split_statements(sql: str) -> List[str]:
+    """Split SQL on top-level ';' while ignoring ';' inside '...' strings or "..." quoted identifiers (with doubled-quote escaping)."""
+    out: List[str] = []
+    buf: List[str] = []
+    i = 0
+    n = len(sql)
+    quote: Optional[str] = None
+    while i < n:
+        ch = sql[i]
+        if quote is None:
+            if ch in ("'", '"'):
+                quote = ch
+                buf.append(ch)
+            elif ch == ";":
+                out.append("".join(buf))
+                buf = []
+            else:
+                buf.append(ch)
+        else:
+            buf.append(ch)
+            if ch == quote:
+                if i + 1 < n and sql[i + 1] == quote:
+                    buf.append(sql[i + 1])
+                    i += 1
+                else:
+                    quote = None
+        i += 1
+    if buf:
+        out.append("".join(buf))
+    return out
+
+
+def _assert_sql_safe(sql: str) -> None:
+    """Reject SQL whose statements begin with a keyword that lets DuckDB step outside the sandboxed database file."""
+    if not isinstance(sql, str):
+        raise UnsafeSql("sql must be a string")
+    cleaned = _strip_sql_comments(sql)
+    for stmt in _split_statements(cleaned):
+        stripped = stmt.strip()
+        if not stripped:
+            continue
+        m = re.match(r"[A-Za-z_]+", stripped)
+        if not m:
+            continue
+        first = m.group(0).upper()
+        if first in _BLOCKED_LEAD_KEYWORDS:
+            raise UnsafeSql(f"statement starts with disallowed keyword: {first}")
 
 
 class mcp_utils:
@@ -252,36 +377,27 @@ class mcp_utils:
         Returns:
             Tuple[pd.DataFrame, str, str]: (truncated DataFrame, path to DuckDB file or empty string if not saved, instance_id for DuckDB file or empty string if not saved)
         """
-        # Get row limit from environment variable
         strlimit = os.environ.get("MCP_SAMPLE_ROWS", str(default_limit))
         limit = int(strlimit) if self.is_int(strlimit) else default_limit
 
-        # Get DuckDB storage location from environment variable
-        duckdblocation = os.environ.get("MCP_DUCKDB_LOCATION", tempfile.gettempdir())
-        
         duckdb_path = ""
         instance_id = ""
-        
+
         if total_rows > limit:
             instance_id = str(uuid.uuid4())
             print(f"Warning: total_rows={total_rows} exceeds threshold; data may be truncated.")
-            
-            # Create in-memory DuckDB and register the DataFrame
-            duckdb_path = os.path.join(duckdblocation, f"{instance_id}.duckdb")
-            con = duckdb.connect(database=duckdb_path)
-            
-            # Register DataFrame as a relation
-            con.register("rows", rows)
 
-            # Persist DataFrame to disk as a real table
-            con.execute("CREATE OR REPLACE TABLE my_table AS SELECT * FROM rows")
-            
-            # Save DuckDB database to disk            
-            con.close()
-                      
-            # Truncate DataFrame for sample
-            rows = rows.head(limit)        
-        return rows, duckdb_path, instance_id    
+            resolved_path = _resolve_duckdb_path(instance_id)
+            duckdb_path = str(resolved_path)
+            con = _open_sandboxed_connection(resolved_path, read_only=False)
+            try:
+                con.register("rows", rows)
+                con.execute("CREATE OR REPLACE TABLE my_table AS SELECT * FROM rows")
+            finally:
+                con.close()
+
+            rows = rows.head(limit)
+        return rows, duckdb_path, instance_id
     
     async def get_rows(
         self,
@@ -400,46 +516,46 @@ class mcp_utils:
         instance_id: str,
         sql: str
     ) -> str:
-       """
-        Queries data in a DuckDB database fetching and loaded into that database 
+        """
+        Queries data in a DuckDB database fetching and loaded into that database
         by a previous tool call.
         instance_id: is the instance id of the dataset returned by the tool that created the data
         this is unique per call to the tool.
         sql: Is the sql that should be executed against the duckdb database which has a single table
         call my_table in it.
         """
-       try:
-           print(f"Calling query_results with instance_id={instance_id}, sql={sql}")
-           duckdb_location = os.environ.get("MCP_DUCKDB_LOCATION", tempfile.gettempdir())
-           print(f"DuckDB file location: {os.path.join(duckdb_location, instance_id)}.duckdb")
-           rows = None
-           # Create connection
-           con = duckdb.connect(os.path.join(duckdb_location, f"{instance_id}.duckdb"), read_only=False)
-           try:
-             # Execute 
-             result = con.execute(sql)
-             rows = result.df()   # Convert to pandas DataFrame
-           except Exception as e:
-             print(f"DuckDB query failed: {str(e)}"  )
-           finally:
-             con.close()  # Always close the connection
-           
-           # Convert each cell to JSON-safe types
-           records = [
-               {str(col): self._to_json_safe(val) for col, val in row.items()}
-               for row in rows.to_dict(orient="records")
-           ]
-           
-           result = {           
-               "row_count": len(rows),
-               "columns": list(map(str, rows.columns)),
-               "data": records,               
-               "instance_id": instance_id
-           }
-           
-           return json.dumps(result, ensure_ascii=False)
-       except Exception as e:
-           return json.dumps({"errorX": str(e)})
+        correlation_id = uuid.uuid4().hex[:8]
+        try:
+            validated_id = _validate_instance_id(instance_id)
+            db_path = _resolve_duckdb_path(validated_id)
+            _assert_sql_safe(sql)
+        except (InvalidInstanceId, UnsafeSql) as e:
+            logger.warning(
+                "query_results rejected [%s]: %s (instance_id=%r)",
+                correlation_id, e, instance_id,
+            )
+            return json.dumps({"error": "invalid request", "correlation_id": correlation_id})
+
+        try:
+            con = _open_sandboxed_connection(db_path, read_only=False)
+            try:
+                rows = con.execute(sql).df()
+            finally:
+                con.close()
+
+            records = [
+                {str(col): self._to_json_safe(val) for col, val in row.items()}
+                for row in rows.to_dict(orient="records")
+            ]
+            return json.dumps({
+                "row_count": len(rows),
+                "columns": list(map(str, rows.columns)),
+                "data": records,
+                "instance_id": validated_id,
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("query_results failed [%s] for instance_id=%s", correlation_id, validated_id)
+            return json.dumps({"error": f"query failed: {e}", "correlation_id": correlation_id})
 
     async def get_answer(
         self,
