@@ -26,9 +26,13 @@ INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'auth.'+INMYDATA_S
 INMYDATA_USE_OAUTH = os.environ.get('INMYDATA_USE_OAUTH', 'false').lower() == 'true'
 INMYDATA_INTROSPECTION_CLIENT_ID = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_ID', '')
 INMYDATA_INTROSPECTION_CLIENT_SECRET = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_SECRET', '')
-INMYDATA_TOKEN_CACHE_TTL = int(os.environ.get('INMYDATA_TOKEN_CACHE_TTL', '300'))  # Default 5 minutes
 
-# Configure token validation for your identity provider with PAT support
+# PAT introspection cache config is read inside PATAwareJWTVerifier from:
+#   INMYDATA_PAT_CACHE_MAX_TTL     (default 60s,  caps positive entries)
+#   INMYDATA_PAT_CACHE_NEGATIVE_TTL (default 10s, for active=false responses)
+#   INMYDATA_PAT_CACHE_MAX_ENTRIES  (default 1024, LRU bound)
+# The legacy INMYDATA_TOKEN_CACHE_TTL is still honored as a deprecated alias
+# for INMYDATA_PAT_CACHE_MAX_TTL.
 token_verifier = PATAwareJWTVerifier(
     jwks_uri=f"https://{INMYDATA_AUTH_SERVER}/.well-known/openid-configuration/jwks",
     issuer=f"https://{INMYDATA_AUTH_SERVER}",
@@ -36,7 +40,6 @@ token_verifier = PATAwareJWTVerifier(
     introspection_endpoint=f"https://{INMYDATA_AUTH_SERVER}/connect/introspect",
     client_id=INMYDATA_INTROSPECTION_CLIENT_ID,
     client_secret=INMYDATA_INTROSPECTION_CLIENT_SECRET,
-    cache_ttl_seconds=INMYDATA_TOKEN_CACHE_TTL
 )
 
 # Define the auth server that the auth provider will use
