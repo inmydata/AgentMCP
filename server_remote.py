@@ -11,11 +11,13 @@ from fastmcp.server.dependencies import get_http_headers, get_http_request
 from pydantic import AnyHttpUrl
 from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 from starlette.requests import Request
+from mcp_logging import configure_logging, logger
 import agentic_rag_tool
 import requests
 
 #get environment variables from .env file if available
 load_dotenv(".env", override=True)
+configure_logging()
 
 #get the following from environment variables:
 INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.com')
@@ -495,19 +497,19 @@ if __name__ == "__main__":
             port = int(sys.argv[2])
     
     if INMYDATA_USE_OAUTH:
-        print(f"Starting MCP server with OAuth and streamable-http transport on port {port}")
-        print("Connectors should use OAuth to authenticate via the /mcp endpoint.")
+        logger.info("Starting MCP server with OAuth and streamable-http transport on port %d", port)
+        logger.info("Connectors should use OAuth to authenticate via the /mcp endpoint.")
     else:
         # Create the app after tools are registered
         app = mcp.streamable_http_app()
-        print(f"Starting MCP server with streamable-http transport on port {port}")
-        print("Credentials should be passed via headers:")
-        print("  Authorization: Your API key, prefixed with 'Bearer '")
-        print("  x-inmydata-tenant: Your tenant name")
-        print("  x-inmydata-server: Server name (optional, default: inmydata.com)")
-        print("  x-inmydata-calendar: Your calendar name")
-        print("  x-inmydata-user: User for events (optional, default: mcp-agent)")
-        print("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
+        logger.info("Starting MCP server with streamable-http transport on port %d", port)
+        logger.info("Credentials should be passed via headers:")
+        logger.info("  Authorization: Your API key, prefixed with 'Bearer '")
+        logger.info("  x-inmydata-tenant: Your tenant name")
+        logger.info("  x-inmydata-server: Server name (optional, default: inmydata.com)")
+        logger.info("  x-inmydata-calendar: Your calendar name")
+        logger.info("  x-inmydata-user: User for events (optional, default: mcp-agent)")
+        logger.info("  x-inmydata-session-id: Session ID (optional, default: mcp-session)")
     
     uvicorn.run(app, host="0.0.0.0", port=port, ws="none")
 
