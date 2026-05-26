@@ -25,6 +25,7 @@ from agentic_rag_client import (
     AgenticRagError,
     KeyLimitExhausted,
 )
+from errors import log_tool_error
 
 
 _log = logging.getLogger("agentic_rag")
@@ -123,17 +124,16 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
         try:
             result = await client.query(external_id, query_text, session_id)
         except KeyLimitExhausted as exc:
-            msg = f"error: {exc}"
             _log.error(
                 "agentic_rag key-limit exhausted for external_id=%s", external_id
             )
-            return msg
+            return f"error: {exc}"
         except AgenticRagError as exc:
             _log.error("agentic_rag error for external_id=%s: %s", external_id, exc)
             return f"error: {exc}"
         except Exception as exc:
-            _log.exception("agentic_rag unexpected error for external_id=%s", external_id)
-            return f"error: {exc}"
+            cid = log_tool_error(exc, context="agentic_rag_query")
+            return f"error: internal error (correlation_id: {cid})"
         return _format(result)
 
     if tenant_resolver is not None:
@@ -151,9 +151,12 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
             """
             try:
                 external_id = await _resolve_tenant(tenant_resolver)
-            except Exception as exc:
+            except AgenticRagError as exc:
                 _log.error("agentic_rag tenant resolution failed: %s", exc)
                 return f"error: {exc}"
+            except Exception as exc:
+                cid = log_tool_error(exc, context="agentic_rag_query.resolve_tenant")
+                return f"error: internal error (correlation_id: {cid})"
             return await _run(external_id, query, session_id)
     elif default_eid:
         resolved_eid = default_eid
