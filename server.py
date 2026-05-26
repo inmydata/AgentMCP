@@ -6,17 +6,22 @@ from inmydata.StructuredData import StructuredDataDriver, AIDataFilter, LogicalO
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Context
 from mcp_utils import mcp_utils
+from mcp_logging import configure_logging
 import agentic_rag_tool
 
 load_dotenv(".env", override=True)
+configure_logging()
 
 # Enable debug mode only when manually set
 if os.getenv("MCP_DEBUG", "0") == "1":
     import debugpy
     debugpy.listen(("localhost", 5678))
-    print("MCP server waiting for VS Code debugger on port 5678...")
+    # Debugger banners go to stderr (sys.stderr) so they don't corrupt the
+    # stdio MCP transport.
+    import sys
+    print("MCP server waiting for VS Code debugger on port 5678...", file=sys.stderr)
     debugpy.wait_for_client()
-    print("Debugger attached. Continuing execution.")
+    print("Debugger attached. Continuing execution.", file=sys.stderr)
 
 mcp = FastMCP("inmydata-agent-server")
 
