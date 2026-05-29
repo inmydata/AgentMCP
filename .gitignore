@@ -31,7 +31,7 @@ htmlcov/
 .dmypy.json
 dmypy.json
 agentmcp.zip
-.claude
+.claude/settings.local.json
 agentic_rag_cache.json
 agentic_rag_cache.json.corrupt.*
 agentic_rag_cache.json.tmp
