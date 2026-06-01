@@ -103,15 +103,35 @@ fly deploy
 
 ## Security Configuration
 
-### Required Headers
+### Authentication & Headers
 
-Clients must include these headers when connecting:
+The server supports two authentication modes. Which headers are honored depends on the mode.
+
+#### Token-based auth (OAuth / PAT)
+
+When the server is configured with OAuth (`INMYDATA_USE_OAUTH=true`), clients authenticate with a bearer token in the standard `Authorization: Bearer <token>` header. **The token is the sole source of truth for identity:**
+
+- **Tenant** is derived from the token's tenant claim — the `x-inmydata-tenant` header is *ignored*.
+- **User** is derived from the token's `sub` claim — the `x-inmydata-user` header is *ignored*.
+
+Supplementary headers still honored in this mode:
+
+- `x-inmydata-calendar` (optional): Calendar name (default: `Default`)
+- `x-inmydata-server` (optional): Server override (default: from `INMYDATA_SERVER`)
+- `x-inmydata-session-id` (optional): Session ID (default: `mcp-session`)
+- `x-inmydata-rag-app` (optional): RAG app name (default: `default`)
+
+> **Behaviour change (GHSA / issue #7 hardening):** Earlier versions preferred the `x-inmydata-tenant` / `x-inmydata-user` headers over the token claims. These headers are no longer read under token-based auth — sending them has no effect. Update any client that relied on them to override identity.
+
+#### API-key auth (no OAuth)
+
+When OAuth is disabled, clients pass credentials via headers:
 
 - `x-inmydata-api-key`: Your inmydata API key
 - `x-inmydata-tenant`: Your tenant name
 - `x-inmydata-calendar`: Your calendar name
-- `x-inmydata-user` (optional): User for chart events (default: mcp-agent)
-- `x-inmydata-session-id` (optional): Session ID (default: mcp-session)
+- `x-inmydata-user` (optional): User for chart events (default: `mcp-agent`)
+- `x-inmydata-session-id` (optional): Session ID (default: `mcp-session`)
 
 ### HTTPS in Production
 
@@ -210,6 +230,10 @@ View logs to monitor requests and errors:
 - **GCP Cloud Run**: Cloud Logging
 - **Azure**: Log Analytics
 
+> **Centralized log retention is now required for diagnostics, not optional.** As of the error-sanitisation hardening (GHSA-xv3j-j949-g8wx / issue #7), tool handlers no longer return internal error detail to MCP callers. On failure the caller receives only an opaque `correlation_id`; the full exception (with stack, SQL, upstream bodies) is logged server-side under that same id. To diagnose a client-reported failure you must look up its `correlation_id` in the server logs. Ensure logs are retained and searchable wherever you deploy.
+
+Set the log level with the `AGENTMCP_LOG_LEVEL` environment variable (default `INFO`). Keep production at `INFO` — `DEBUG` emits additional (redacted) introspection diagnostics.
+
 ## Scaling
 
 For high-traffic deployments:
@@ -226,7 +250,10 @@ For high-traffic deployments:
 
 ### Authentication Errors
 - Verify headers are correctly formatted
-- Check API key validity in inmydata
+- Check API key / token validity in inmydata
+
+### Opaque Tool Errors (`correlation_id`)
+Tool responses no longer contain the underlying error message — only a `correlation_id`. This is by design (see [Application Logs](#application-logs)). To find the cause, search the server logs for that id; the full exception detail is recorded there.
 
 ### Timeout Issues
 - The `get_answer` tool can take up to 60 seconds
@@ -234,10 +261,23 @@ For high-traffic deployments:
 
 ## Environment Variables
 
-Optional environment variables for the remote server:
+Optional environment variables for the remote server (all have safe defaults):
 
+**Transport**
 - `TRANSPORT`: Transport type (sse or streamable-http)
 - `PORT`: Server port (default: 8000)
+
+**Logging**
+- `AGENTMCP_LOG_LEVEL`: Log level (default `INFO`). Keep at `INFO` in production.
+
+**DuckDB sandbox** (query-results storage)
+- `MCP_DUCKDB_LOCATION`: Base directory for DuckDB files. Defaults to the system temp dir, which is **ephemeral inside a container** — set this to a dedicated, persistent, writable directory in production. It also acts as the path-containment boundary for the SQL sandbox (issue #4 hardening).
+
+**PAT introspection cache** (OAuth/PAT auth)
+- `INMYDATA_PAT_CACHE_MAX_TTL`: Max TTL for positive cache entries in seconds (default `60`). Caps how long a revoked PAT keeps working.
+- `INMYDATA_PAT_CACHE_NEGATIVE_TTL`: TTL for `active:false` responses in seconds (default `10`, jittered ±20%).
+- `INMYDATA_PAT_CACHE_MAX_ENTRIES`: LRU cache bound (default `1024`).
+- `INMYDATA_TOKEN_CACHE_TTL`: **Deprecated** — honored as an alias for `INMYDATA_PAT_CACHE_MAX_TTL` and logs a one-time warning. Rename to `INMYDATA_PAT_CACHE_MAX_TTL` if your deployment sets it.
 
 ## Cost Optimization
 
