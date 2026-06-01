@@ -8,4 +8,13 @@ services:
     environment:
       - TRANSPORT=sse
       - PORT=8000
+      # Dedicated, persistent directory for DuckDB query-results storage.
+      # Defaults to the system temp dir, which is ephemeral in a container;
+      # this also bounds the SQL sandbox path containment.
+      - MCP_DUCKDB_LOCATION=/data/duckdb
+    volumes:
+      - duckdb-data:/data/duckdb
     restart: unless-stopped
+
+volumes:
+  duckdb-data:

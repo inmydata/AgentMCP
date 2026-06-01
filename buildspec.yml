@@ -3,6 +3,11 @@ version: 0.2
 phases:
   pre_build:
     commands:
+      - echo Running test suite before build...
+      # Run pytest in a throwaway container so the gate does not depend on the
+      # CodeBuild host having Python/uv. A non-zero exit fails the phase and
+      # blocks the image build/push below.
+      - docker run --rm -v "$CODEBUILD_SRC_DIR":/app -w /app python:3.11-slim sh -c "pip install uv && uv sync --extra test && uv run pytest"
       - echo "Logging in to Docker Hub..."
       - echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin
       - echo Logging in to Amazon ECR...
