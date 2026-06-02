@@ -185,9 +185,18 @@ async def get_tenant(token: str) -> str:
 async def utils() -> mcp_utils:
     try:
         if INMYDATA_USE_OAUTH:
-            # OAuth flow - use bearer token and extract tenant from token
-            headers = get_http_headers(include={"authorization"})
-            api_key = headers.get('authorization', '').replace('Bearer ', '')
+            # OAuth flow - use bearer token and extract tenant from token.
+            # get_http_headers() strips the authorization header by default; the
+            # include= kwarg to keep it only exists in fastmcp 3.x, but the pinned
+            # runtime is 2.12.4. Read the bearer token straight off the request so
+            # this works regardless of fastmcp version. The non-authorization
+            # x-inmydata-* headers are not stripped, so get_http_headers() is fine
+            # for those.
+            req = get_http_request()
+            api_key = (
+                req.headers.get('authorization', '') if req is not None else ''
+            ).replace('Bearer ', '')
+            headers = get_http_headers()
             tenant = await get_tenant(api_key)
             server = headers.get('x-inmydata-server', await get_server())
             calendar = headers.get('x-inmydata-calendar', 'Default')
