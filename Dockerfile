@@ -1,4 +1,8 @@
-FROM python:3.11-slim
+# BASE_IMAGE defaults to Docker Hub for local builds. CI overrides it with the
+# ECR pull-through cache path (see buildspec.yml) so builds don't hit Docker Hub
+# rate limits.
+ARG BASE_IMAGE=python:3.11-slim
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
