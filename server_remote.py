@@ -77,7 +77,7 @@ if INMYDATA_USE_OAUTH:
      # Create the main FastAPI app and mount the MCP app
 
     app = FastAPI(lifespan=mcp_app.lifespan)
-    app.mount("/mcp", mcp_app)
+    #app.mount("/mcp", mcp_app)
     app.add_middleware(MCPPathRewriteMiddleware)
 
     @app.get("/.well-known/mcp.json")
@@ -95,6 +95,7 @@ if INMYDATA_USE_OAUTH:
     #--- Custom OAuth endpoints ---
     @app.get("/.well-known/oauth-protected-resource/mcp")
     @app.get("/.well-known/oauth-protected-resource")
+    @app.get("/mcp/.well-known/oauth-protected-resource")
     def oauth_protected_resource():
         return JSONResponse(status_code=401, content={"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI", "inmydata.RAG", "inmydata.Interview"], "bearer_methods_supported": ["header"]})
     # Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
@@ -102,7 +103,6 @@ if INMYDATA_USE_OAUTH:
     @app.get("/.well-known/oauth-authorization-server/mcp")
     @app.get("/.well-known/openid-configuration")
     @app.get("/.well-known/openid-configuration/mcp")
-    @app.get("/mcp/.well-known/openid-configuration")
     async def oauth_metadata():
         return {
             "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
@@ -113,7 +113,9 @@ if INMYDATA_USE_OAUTH:
               "scopes_supported": [
                 "openid",
                 "profile",
-                "inmydata.Developer.AI"
+                "inmydata.Developer.AI",
+                "inmydata.RAG", 
+                "inmydata.Interview"
             ],
             "response_types_supported": ["code"],
             "token_endpoint_auth_methods_supported": ["client_secret_post"],
@@ -151,6 +153,8 @@ if INMYDATA_USE_OAUTH:
                 status_code=response.status_code,
                 headers=dict(response.headers)
             )    
+
+    app.mount("/mcp", mcp_app)
 else:
     # Initialise FastMCP without auth
     mcp = FastMCP(name="inmydata-agent-server")
