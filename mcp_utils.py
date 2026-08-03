@@ -418,6 +418,10 @@ class mcp_utils:
             if not self.tenant:
                 return json.dumps({"error": "Tenant not set"})
 
+            logger.info(
+                "get_rows called (subject=%s, fields=%d, where_terms=%d)",
+                subject, len(select or []), len(where or []),
+            )
             driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
             logger.debug("Calling get_rows (subject=%s, fields=%s, where=%s)", subject, select, where)
             rows = driver.get_data(subject, select, self.parse_where(where), None)
@@ -444,10 +448,14 @@ class mcp_utils:
                 "subject": subject,
                 "row_count": total_rows,
                 "columns": list(map(str, rows.columns)),
-                "data": records,            
+                "data": records,
                 "instance_id": instanceid
             }
-            
+
+            logger.info(
+                "get_rows completed (subject=%s, row_count=%d, sample_rows=%d, instance_id=%s)",
+                subject, total_rows, len(records), instanceid or "-",
+            )
             return json.dumps(result, ensure_ascii=False)
         except UserFacingError as exc:
             return json.dumps({"error": str(exc)})
@@ -471,6 +479,10 @@ class mcp_utils:
            if not self.tenant:
                return json.dumps({"error": "Tenant not set"})
 
+           logger.info(
+               "get_top_n called (subject=%s, group_by=%s, order_by=%s, n=%s, where_terms=%d)",
+               subject, group_by, order_by, n, len(where or []),
+           )
            driver = StructuredDataDriver(self.tenant, self.server, self.user, self.session_id, self.api_key)
            logger.debug(
                "Calling get_top_n (subject=%s, group_by=%s, order_by=%s, n=%s, where=%s)",
@@ -513,7 +525,11 @@ class mcp_utils:
                "data": records,
                "instance_id": instanceid
            }
-           
+
+           logger.info(
+               "get_top_n completed (subject=%s, row_count=%d, sample_rows=%d, instance_id=%s)",
+               subject, total_rows, len(records), instanceid or "-",
+           )
            return json.dumps(result, ensure_ascii=False)
        except UserFacingError as exc:
            return json.dumps({"error": str(exc)})
@@ -545,6 +561,12 @@ class mcp_utils:
             )
             return json.dumps({"error": "invalid request", "correlation_id": correlation_id})
 
+        logger.info(
+            "query_results called [%s] (instance_id=%s, sql_chars=%d)",
+            correlation_id, validated_id, len(sql),
+        )
+        logger.debug("query_results sql [%s]: %s", correlation_id, sql)
+
         try:
             con = _open_sandboxed_connection(db_path, read_only=False)
             try:
@@ -556,6 +578,10 @@ class mcp_utils:
                 {str(col): self._to_json_safe(val) for col, val in row.items()}
                 for row in rows.to_dict(orient="records")
             ]
+            logger.info(
+                "query_results succeeded [%s] (instance_id=%s, row_count=%d)",
+                correlation_id, validated_id, len(rows),
+            )
             return json.dumps({
                 "row_count": len(rows),
                 "columns": list(map(str, rows.columns)),
