@@ -124,8 +124,9 @@ class TestResolveDuckdbPath:
             _resolve_duckdb_path(TEST_TENANT, "../escape")
 
     def test_symlink_escape_is_blocked(self, tmp_path, monkeypatch):
-        """If the tenant namespace contains a symlink to elsewhere,
-        the resolved path must still live inside the realpath of the base."""
+        """If the DuckDB file path inside the tenant namespace is a symlink to
+        elsewhere, the resolved path must still live inside the realpath of
+        the namespace."""
         base = tmp_path / "base"
         namespace = base / _tenant_namespace(TEST_TENANT)
         namespace.mkdir(parents=True)
@@ -142,6 +143,22 @@ class TestResolveDuckdbPath:
         monkeypatch.setenv("MCP_DUCKDB_LOCATION", str(base))
         with pytest.raises(InvalidInstanceId):
             _resolve_duckdb_path(TEST_TENANT, instance_id)
+
+    def test_namespace_symlink_escape_is_blocked(self, tmp_path, monkeypatch):
+        """If the tenant namespace directory itself is a symlink to elsewhere,
+        resolution must fail rather than follow it outside the base."""
+        base = tmp_path / "base"
+        base.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        link = base / _tenant_namespace(TEST_TENANT)
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform/account")
+        monkeypatch.setenv("MCP_DUCKDB_LOCATION", str(base))
+        with pytest.raises(InvalidTenant):
+            _resolve_duckdb_path(TEST_TENANT, str(uuid.uuid4()))
 
 
 # ---------------------------------------------------------------------------

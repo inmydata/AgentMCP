@@ -84,6 +84,12 @@ def _tenant_namespace(tenant: str) -> str:
 def _resolve_duckdb_path(tenant: str, instance_id: str) -> Path:
     base = _get_duckdb_base_location()
     namespace = (base / _tenant_namespace(tenant)).resolve()
+    try:
+        namespace.relative_to(base)
+    except ValueError as e:
+        # The slug is sanitized, so this only trips if the namespace directory
+        # itself was replaced with a symlink pointing outside the base.
+        raise InvalidTenant("tenant namespace resolves outside the configured DuckDB directory") from e
     candidate = (namespace / f"{instance_id}.duckdb").resolve()
     try:
         candidate.relative_to(namespace)
