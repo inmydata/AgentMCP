@@ -1,4 +1,5 @@
 from decimal import Decimal
+import hashlib
 import os
 import re
 import tempfile
@@ -20,6 +21,10 @@ from errors import UserFacingError, tool_error_response
 
 class InvalidInstanceId(Exception):
     """Raised when instance_id is not a well-formed UUID or resolves outside the configured DuckDB directory."""
+
+
+class InvalidTenant(Exception):
+    """Raised when a tenant identifier is missing/blank, so no per-tenant DuckDB namespace can be derived."""
 
 
 class UnsafeSql(Exception):
@@ -60,13 +65,36 @@ def _validate_instance_id(instance_id: str) -> str:
     return instance_id
 
 
-def _resolve_duckdb_path(instance_id: str) -> Path:
+def _tenant_namespace(tenant: str) -> str:
+    """Filesystem-safe, collision-free directory name for a tenant.
+
+    Tenant names are treated case-insensitively (matching the rest of the
+    server, e.g. the ``{TENANT}_API_KEY`` env lookup). The sanitized slug keeps
+    the name recognisable for operators; the digest suffix guarantees two
+    distinct tenants can never share a namespace even if their slugs collide.
+    """
+    if not isinstance(tenant, str) or not tenant.strip():
+        raise InvalidTenant("tenant is not set")
+    raw = tenant.strip().lower()
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    slug = re.sub(r"[^a-z0-9_-]", "-", raw)[:40].strip("-") or "tenant"
+    return f"{slug}--{digest}"
+
+
+def _resolve_duckdb_path(tenant: str, instance_id: str) -> Path:
     base = _get_duckdb_base_location()
-    candidate = (base / f"{instance_id}.duckdb").resolve()
+    namespace = (base / _tenant_namespace(tenant)).resolve()
     try:
-        candidate.relative_to(base)
+        namespace.relative_to(base)
     except ValueError as e:
-        raise InvalidInstanceId("instance_id resolves outside the configured DuckDB directory") from e
+        # The slug is sanitized, so this only trips if the namespace directory
+        # itself was replaced with a symlink pointing outside the base.
+        raise InvalidTenant("tenant namespace resolves outside the configured DuckDB directory") from e
+    candidate = (namespace / f"{instance_id}.duckdb").resolve()
+    try:
+        candidate.relative_to(namespace)
+    except ValueError as e:
+        raise InvalidInstanceId("instance_id resolves outside the tenant's DuckDB directory") from e
     return candidate
 
 
@@ -389,7 +417,8 @@ class mcp_utils:
             instance_id = str(uuid.uuid4())
             logger.warning("total_rows=%d exceeds threshold; data may be truncated.", total_rows)
 
-            resolved_path = _resolve_duckdb_path(instance_id)
+            resolved_path = _resolve_duckdb_path(self.tenant, instance_id)
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
             duckdb_path = str(resolved_path)
             con = _open_sandboxed_connection(resolved_path, read_only=False)
             try:
@@ -552,14 +581,21 @@ class mcp_utils:
         correlation_id = uuid.uuid4().hex[:8]
         try:
             validated_id = _validate_instance_id(instance_id)
-            db_path = _resolve_duckdb_path(validated_id)
+            db_path = _resolve_duckdb_path(self.tenant, validated_id)
             _assert_sql_safe(sql)
-        except (InvalidInstanceId, UnsafeSql) as e:
+        except (InvalidInstanceId, InvalidTenant, UnsafeSql) as e:
             logger.warning(
                 "query_results rejected [%s]: %s (instance_id=%r)",
                 correlation_id, e, instance_id,
             )
             return json.dumps({"error": "invalid request", "correlation_id": correlation_id})
+
+        if not db_path.exists():
+            logger.warning(
+                "query_results instance not found [%s] (instance_id=%s)",
+                correlation_id, validated_id,
+            )
+            return json.dumps({"error": "instance not found", "correlation_id": correlation_id})
 
         logger.info(
             "query_results called [%s] (instance_id=%s, sql_chars=%d)",
