@@ -273,6 +273,8 @@ Optional environment variables for the remote server (all have safe defaults):
 **DuckDB sandbox** (query-results storage)
 - `MCP_DUCKDB_LOCATION`: Base directory for DuckDB files. Defaults to the system temp dir, which is **ephemeral inside a container** — set this to a dedicated, persistent, writable directory in production. It also acts as the path-containment boundary for the SQL sandbox (issue #4 hardening).
 
+> **Behaviour change (issue #17 hardening):** DuckDB files are now stored in a per-tenant subdirectory (`{base}/{tenant-slug}--{digest}/{instance_id}.duckdb`) and `query_results_fast` only resolves instance ids inside the calling tenant's subdirectory — an `instance_id` leaked across tenants returns `instance not found`. Files written by earlier versions directly into the base directory are no longer reachable; since these are short-lived query results, they can simply be deleted or left to age out.
+
 **PAT introspection cache** (OAuth/PAT auth)
 - `INMYDATA_PAT_CACHE_MAX_TTL`: Max TTL for positive cache entries in seconds (default `60`). Caps how long a revoked PAT keeps working.
 - `INMYDATA_PAT_CACHE_NEGATIVE_TTL`: TTL for `active:false` responses in seconds (default `10`, jittered ±20%).

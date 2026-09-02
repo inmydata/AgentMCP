@@ -5,7 +5,7 @@ description = "inmydata MCP server"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.119.0",
-    "inmydata>=0.0.17",
+    "inmydata>=0.0.20",
     "mcp>=1.15.0",
     "pandas>=2.3.3",
     "python-dotenv>=1.1.1",
