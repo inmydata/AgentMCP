@@ -662,7 +662,7 @@ wheels = [
 
 [[package]]
 name = "inmydata"
-version = "0.0.20"
+version = "0.0.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -671,9 +671,9 @@ dependencies = [
     { name = "requests" },
     { name = "signalrcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/40/9c/b7303ac3efef480613b34054141bee10fcd253683a8ebf1be972eb4e316c/inmydata-0.0.20.tar.gz", hash = "sha256:8174cabd2c691bf3ab10e02bd67924809dd4e991f72674c3b169d7de7f863f4d", size = 60419, upload-time = "2026-09-02T12:57:34.665Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/1b/a10faad7b5666f37f73247c9e628db6f40ec2aa88770b463af7527c42d68/inmydata-0.0.21.tar.gz", hash = "sha256:2efff8261087fd14d59f0128699c7fd318566a4ec73c05556a39a5b364ed9a88", size = 66020, upload-time = "2026-09-08T09:22:50.907Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/87/4fc0ec45a056e53102b46fd5af86850f3c780f87ca896d3dc3478ce836b6/inmydata-0.0.20-py3-none-any.whl", hash = "sha256:87eec19a578ed8097b953e97319bb2b8488b4d637d677e406452848adf627ec0", size = 24632, upload-time = "2026-09-02T12:57:33.332Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/00/053c1464e1b11ee247cf375fef7487036042c784bbdf24f2b97e22e280d8/inmydata-0.0.21-py3-none-any.whl", hash = "sha256:e5fb2014aab3fb24e7700a349f25195d135f5057b735856e13fa7104b9d7fa4d", size = 24888, upload-time = "2026-09-08T09:22:49.851Z" },
 ]
 
 [[package]]
@@ -1609,7 +1609,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.119.0" },
     { name = "fastmcp", specifier = "==2.12.4" },
     { name = "httpx" },
-    { name = "inmydata", specifier = ">=0.0.20" },
+    { name = "inmydata", specifier = ">=0.0.21" },
     { name = "mcp", specifier = ">=1.15.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
