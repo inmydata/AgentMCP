@@ -25,7 +25,12 @@ INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.com')
 INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
 INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'auth.'+INMYDATA_SERVER)
 INMYDATA_USE_OAUTH = os.environ.get('INMYDATA_USE_OAUTH', 'false').lower() == 'true'
-INMYDATA_INTROSPECTION_CLIENT_ID = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_ID', '')
+# Must match the auth server's own issuer exactly, with no trailing slash.
+# Clients compare the `iss` on the authorization response (RFC 9207) and the
+# advertised issuer (RFC 8414) by exact string match, and Duende sends
+# "https://auth.inmydata.com".
+INMYDATA_AUTH_ISSUER = f"https://{INMYDATA_AUTH_SERVER}"
+INMYDATA_INTROSPECTION_CLIENT_ID =os.environ.get('INMYDATA_INTROSPECTION_CLIENT_ID', '')
 INMYDATA_INTROSPECTION_CLIENT_SECRET = os.environ.get('INMYDATA_INTROSPECTION_CLIENT_SECRET', '')
 
 # PAT introspection cache config is read inside PATAwareJWTVerifier from:
@@ -36,7 +41,7 @@ INMYDATA_INTROSPECTION_CLIENT_SECRET = os.environ.get('INMYDATA_INTROSPECTION_CL
 # for INMYDATA_PAT_CACHE_MAX_TTL.
 token_verifier = PATAwareJWTVerifier(
     jwks_uri=f"https://{INMYDATA_AUTH_SERVER}/.well-known/openid-configuration/jwks",
-    issuer=f"https://{INMYDATA_AUTH_SERVER}",
+    issuer=INMYDATA_AUTH_ISSUER,
     audience=f"https://{INMYDATA_MCP_HOST}/mcp",
     introspection_endpoint=f"https://{INMYDATA_AUTH_SERVER}/connect/introspect",
     client_id=INMYDATA_INTROSPECTION_CLIENT_ID,
@@ -97,7 +102,7 @@ if INMYDATA_USE_OAUTH:
     @app.get("/.well-known/oauth-protected-resource")
     @app.get("/mcp/.well-known/oauth-protected-resource")
     def oauth_protected_resource():
-        return JSONResponse(status_code=401, content={"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [f"https://{INMYDATA_AUTH_SERVER}/"], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI", "inmydata.RAG", "inmydata.Interview"], "bearer_methods_supported": ["header"]})
+        return JSONResponse(status_code=401, content={"resource": f"https://{INMYDATA_MCP_HOST}/mcp", "authorization_servers": [INMYDATA_AUTH_ISSUER], "scopes_supported": ["openid", "profile", "inmydata.Developer.AI", "inmydata.RAG", "inmydata.Interview"], "bearer_methods_supported": ["header"]})
     # Connectors are failing to go to the correct endpoints when we only offer /.well-known/oauth-protected-resource.  Serving the endpoint metadata here allows us to fix this.
     @app.get("/.well-known/oauth-authorization-server")
     @app.get("/.well-known/oauth-authorization-server/mcp")
@@ -105,7 +110,7 @@ if INMYDATA_USE_OAUTH:
     @app.get("/.well-known/openid-configuration/mcp")
     async def oauth_metadata():
         return {
-            "issuer": f"https://{INMYDATA_AUTH_SERVER}/",
+            "issuer": INMYDATA_AUTH_ISSUER,
             "authorization_endpoint": f"https://{INMYDATA_AUTH_SERVER}/connect/authorize",
             "token_endpoint": f"https://{INMYDATA_MCP_HOST}/connect/token",
             "grant_types_supported": ["authorization_code", "refresh_token"],
