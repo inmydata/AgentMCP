@@ -670,7 +670,24 @@ class mcp_utils:
             if ctx:
                 await ctx.report_progress(progress=0, message=f"Starting conversational query: {question}")
 
-            answer = await driver.get_answer(question)
+            try:
+                answer = await driver.get_answer(question)
+            except KeyError as exc:
+                # The inmydata SDK reads response['answer'] without checking the
+                # HTTP status, so an error response from the question API (expired
+                # or under-privileged token, upstream failure) surfaces as
+                # KeyError: 'answer'. Turn that into a message the caller can use.
+                logger.warning(
+                    "get_answer: question API returned no answer (tenant=%s, missing_key=%s)",
+                    self.tenant, exc.args[0] if exc.args else "-",
+                )
+                raise UserFacingError(
+                    "The inmydata question service returned an error instead of an answer. "
+                    "This usually means the sign-in has expired or does not have permission "
+                    "to ask questions for this tenant, or the service is temporarily unavailable. "
+                    "Try again, sign in again if it keeps happening, or use get_rows_fast / "
+                    "get_top_n_fast to fetch the data directly."
+                ) from exc
 
             if ctx:
                 await ctx.report_progress(progress=progress_counter + 1, message=f"Query completed. Subject used: {answer.subject}")
