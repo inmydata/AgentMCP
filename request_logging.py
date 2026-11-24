@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import parse_qs
 
+from starlette.datastructures import Headers
+
 from mcp_logging import logger, token_fingerprint
 
 # The logger captures at most this many bytes while the app consumes the body.
@@ -161,7 +163,12 @@ class MCPRequestLogMiddleware:
             return await self.app(scope, receive, send)
 
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
-        auth_header = headers.get("authorization", "").strip()
+        # OAuth authentication uses Starlette's first-value header lookup;
+        # legacy mode uses FastMCP's last-value header dictionary.
+        auth_header = (
+            Headers(raw=scope.get("headers", [])).get("authorization", "")
+            if self.oauth else headers.get("authorization", "")
+        ).strip()
         token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else auth_header
 
         request_body = bytearray()

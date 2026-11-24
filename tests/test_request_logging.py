@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastmcp.server.auth.providers.jwt import AccessToken  # noqa: E402
+from starlette.datastructures import Headers  # noqa: E402
 from mcp_logging import logger as agentmcp_logger, token_fingerprint  # noqa: E402
 from mcp_utils import mcp_utils  # noqa: E402
 from request_logging import _MAX_BODY_TO_PARSE, MCPRequestLogMiddleware  # noqa: E402
@@ -229,6 +230,44 @@ async def test_handshake_logs_client_and_tenant_and_replays_body(logs):
     assert "rpc=initialize" in line and "client_id=claude-connector" in line and "tenant=acme" in line
     assert "unverified" not in line
     assert token not in line and token_fingerprint(token) in line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("oauth", [True, False])
+async def test_duplicate_authorization_logs_the_credential_used_by_app(logs, oauth):
+    first = _jwt({"client_id": "first-client", "client_imd_tenant": "first-tenant"})
+    second = _jwt({"client_id": "second-client", "client_imd_tenant": "second-tenant"})
+    raw_headers = [
+        (b"authorization", f"Bearer {first}".encode()),
+        (b"authorization", f"Bearer {second}".encode()),
+    ]
+    scope = {
+        "type": "http", "method": "POST", "path": "/mcp", "query_string": b"tenant=legacy",
+        "headers": raw_headers, "client": ("10.0.0.1", 1234),
+    }
+
+    async def app(scope, receive, send):
+        headers = Headers(scope=scope)
+        used = headers.get("authorization") if oauth else dict(headers.items())["authorization"]
+        expected = first if oauth else second
+        assert used == f"Bearer {expected}"
+        await receive()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    async def receive():
+        return {"type": "http.request", "body": INIT_BODY, "more_body": False}
+
+    async def send(message):
+        pass
+
+    await MCPRequestLogMiddleware(app, oauth=oauth)(scope, receive, send)
+
+    expected = first if oauth else second
+    assert f"token={token_fingerprint(expected)}" in logs[0]
+    if oauth:
+        assert "client_id=first-client" in logs[0]
+        assert "tenant=first-tenant" in logs[0]
+        assert "second-client" not in logs[0]
 
 
 @pytest.mark.asyncio
