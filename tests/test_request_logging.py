@@ -283,7 +283,11 @@ async def test_401_with_jwt_marks_claims_unverified(logs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("token", ["opaque-pat", _jwt({"client_id": "payload-client", "imd_tenant": "payload-tenant"})])
+@pytest.mark.parametrize(
+    "token",
+    ["opaque-pat", _jwt({"client_id": "payload-client", "imd_tenant": "payload-tenant"})],
+    ids=["opaque-pat", "jwt"],
+)
 async def test_request_logs_verified_identity_not_decoded_claims(logs, token):
     class _Verifier:
         async def verify_token(self, token):
