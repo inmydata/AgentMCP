@@ -13,6 +13,7 @@ from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 from starlette.requests import Request
 from mcp_logging import configure_logging, logger
 from errors import UserFacingError, tool_error_response
+from request_logging import MCPRequestLogMiddleware
 import agentic_rag_tool
 import requests
 
@@ -84,6 +85,8 @@ if INMYDATA_USE_OAUTH:
     app = FastAPI(lifespan=mcp_app.lifespan)
     #app.mount("/mcp", mcp_app)
     app.add_middleware(MCPPathRewriteMiddleware)
+    # Logs client id / tenant for every /mcp request, including 401s.
+    app.add_middleware(MCPRequestLogMiddleware, oauth=True)
 
     @app.get("/.well-known/mcp.json")
     async def mcp_well_known():
@@ -551,6 +554,7 @@ if __name__ == "__main__":
     else:
         # Create the app after tools are registered
         app = mcp.streamable_http_app()
+        app = MCPRequestLogMiddleware(app, oauth=False)
         logger.info("Starting MCP server with streamable-http transport on port %d", port)
         logger.info("Credentials should be passed via headers:")
         logger.info("  Authorization: Your API key, prefixed with 'Bearer '")
