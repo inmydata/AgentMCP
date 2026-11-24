@@ -50,6 +50,11 @@ AUTH_SERVER = "auth.platform.example.test"
 ISSUER = f"https://{AUTH_SERVER}"
 
 _MANAGED_ENV = (
+    "_API_KEY",
+    "ACME_API_KEY",
+    "RIVAL_API_KEY",
+    "TENANT-A_API_KEY",
+    "TENANT-B_API_KEY",
     "INMYDATA_MCP_HOST",
     "INMYDATA_SERVER",
     "INMYDATA_AUTH_SERVER",
