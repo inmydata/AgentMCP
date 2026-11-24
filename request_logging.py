@@ -204,14 +204,18 @@ class MCPRequestLogMiddleware:
             raise
 
     def _log(self, scope, headers, token: str, rpc: Optional[str], status: int) -> None:
-        method = scope.get("method", "-")
-        path = scope.get("path", "-")
-        session = headers.get("mcp-session-id", "-")
+        def log_field(value: Any) -> str:
+            return json.dumps(str(value), ensure_ascii=True)[1:-1]
+
+        method = log_field(scope.get("method", "-"))
+        path = log_field(scope.get("path", "-"))
+        session = log_field(headers.get("mcp-session-id", "-"))
+        rpc_field = log_field(rpc or "-")
 
         if not token:
             logger.info(
                 "MCP request without token: %s %s rpc=%s status=%d ip=%s user_agent=%r",
-                method, path, rpc or "-", status, _client_ip(headers, scope),
+                method, path, rpc_field, status, log_field(_client_ip(headers, scope)),
                 headers.get("user-agent", "-"),
             )
             return
@@ -220,8 +224,8 @@ class MCPRequestLogMiddleware:
         unverified = self.oauth and not (200 <= status < 300) and (identity.client_id or identity.tenant)
         logger.info(
             "MCP request: %s %s rpc=%s status=%d client_id=%s tenant=%s token=%s session=%s%s",
-            method, path, rpc or "-", status,
-            identity.client_id or "-", identity.tenant or "-",
+            method, path, rpc_field, status,
+            log_field(identity.client_id or "-"), log_field(identity.tenant or "-"),
             token_fingerprint(token), session,
             " claims=unverified" if unverified else "",
         )
