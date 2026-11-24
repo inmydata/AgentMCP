@@ -83,19 +83,22 @@ class TestValidateInstanceId:
         valid = str(uuid.uuid4()).upper()
         assert _validate_instance_id(valid) == valid
 
+    # Explicit ids keep test names stable between runs (the uuid values change
+    # every time) and free of backslashes/control characters, which pytest and
+    # the VS Code test explorer cannot select by name.
     @pytest.mark.parametrize("bad", [
-        "",
-        "not-a-uuid",
-        "../somethingelse",
-        "../" + str(uuid.uuid4()),
-        "/etc/passwd",
-        "C:\\Windows\\System32\\config\\SAM",
-        "..%2F" + str(uuid.uuid4()),
-        str(uuid.uuid4()) + "/../other",
-        str(uuid.uuid4()) + "\x00",
-        "00000000-0000-0000-0000-00000000000",   # 35 chars
-        "00000000-0000-0000-0000-0000000000000",  # 37 chars
-        "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz",  # non-hex
+        pytest.param("", id="empty"),
+        pytest.param("not-a-uuid", id="not-a-uuid"),
+        pytest.param("../somethingelse", id="relative-path"),
+        pytest.param("../" + str(uuid.uuid4()), id="uuid-with-parent-prefix"),
+        pytest.param("/etc/passwd", id="unix-absolute-path"),
+        pytest.param("C:\\Windows\\System32\\config\\SAM", id="windows-absolute-path"),
+        pytest.param("..%2F" + str(uuid.uuid4()), id="uuid-with-encoded-parent-prefix"),
+        pytest.param(str(uuid.uuid4()) + "/../other", id="uuid-with-parent-suffix"),
+        pytest.param(str(uuid.uuid4()) + "\x00", id="uuid-with-null-byte"),
+        pytest.param("00000000-0000-0000-0000-00000000000", id="too-short-35-chars"),
+        pytest.param("00000000-0000-0000-0000-0000000000000", id="too-long-37-chars"),
+        pytest.param("zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz", id="non-hex"),
     ])
     def test_rejects_invalid(self, bad):
         with pytest.raises(InvalidInstanceId):
@@ -176,12 +179,12 @@ class TestTenantNamespace:
         assert _tenant_namespace("a.b") != _tenant_namespace("a-b")
 
     @pytest.mark.parametrize("hostile", [
-        "../escape",
-        "..\\escape",
-        "a/b/c",
-        "tenant\x00name",
-        "/etc",
-        "...",
+        pytest.param("../escape", id="unix-parent-path"),
+        pytest.param("..\\escape", id="windows-parent-path"),
+        pytest.param("a/b/c", id="nested-path"),
+        pytest.param("tenant\x00name", id="null-byte"),
+        pytest.param("/etc", id="absolute-path"),
+        pytest.param("...", id="dots"),
     ])
     def test_hostile_tenant_names_stay_inside_base(self, duckdb_dir, hostile):
         resolved = _resolve_duckdb_path(hostile, str(uuid.uuid4()))
@@ -341,11 +344,11 @@ class TestQueryResults:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("bad_id", [
-        "../escape",
-        "/etc/passwd",
-        "not-a-uuid",
-        "",
-        str(uuid.uuid4()) + "/../other",
+        pytest.param("../escape", id="relative-path"),
+        pytest.param("/etc/passwd", id="unix-absolute-path"),
+        pytest.param("not-a-uuid", id="not-a-uuid"),
+        pytest.param("", id="empty"),
+        pytest.param(str(uuid.uuid4()) + "/../other", id="uuid-with-parent-suffix"),
     ])
     async def test_rejects_bad_instance_id_with_generic_error(self, utils_instance, duckdb_dir, bad_id):
         result_json = await utils_instance.query_results(bad_id, "SELECT 1")

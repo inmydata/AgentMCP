@@ -13,6 +13,7 @@ from pat_jwt_auth import PATAwareJWTVerifier, PATSupportingRemoteAuthProvider
 from starlette.requests import Request
 from mcp_logging import configure_logging, logger
 from errors import UserFacingError, tool_error_response
+from request_logging import MCPRequestLogMiddleware
 import agentic_rag_tool
 import requests
 
@@ -84,6 +85,8 @@ if INMYDATA_USE_OAUTH:
     app = FastAPI(lifespan=mcp_app.lifespan)
     #app.mount("/mcp", mcp_app)
     app.add_middleware(MCPPathRewriteMiddleware)
+    # Logs client id / tenant for every /mcp request, including 401s.
+    app.add_middleware(MCPRequestLogMiddleware, oauth=True)
 
     @app.get("/.well-known/mcp.json")
     async def mcp_well_known():
@@ -216,6 +219,7 @@ async def utils() -> mcp_utils:
             # Fetch headers and request (if available). Preference: query parameter 'tenant' > header 'x-inmydata-tenant'
             headers = get_http_headers()
             tenant = ''
+            req = None
             try:
                 req = get_http_request()
                 if req is not None:
@@ -223,6 +227,7 @@ async def utils() -> mcp_utils:
             except Exception:
                 # If get_http_request isn't available or fails, ignore and fall back to headers
                 tenant = ''
+                req = None
 
             # Only use header tenant if query param not provided
             if not tenant:
@@ -233,7 +238,8 @@ async def utils() -> mcp_utils:
             if tenant.upper() + "_API_KEY" in os.environ:
                 api_key = os.environ.get(tenant.upper() + "_API_KEY", "")
             else:
-                api_key = headers.get('authorization', '').replace('Bearer ', '')
+                authorization = req.headers.get('authorization', '') if req is not None else ''
+                api_key = authorization.replace('Bearer ', '')
 
             server = headers.get('x-inmydata-server', '')
             if not server:
@@ -520,8 +526,10 @@ async def get_calendar_period_date_range(
 async def _rag_tenant_resolver() -> str:
     # Must match LangChainMCPChat's `_external_id(tenant, app_name)` byte-for-byte
     # (services/agentic_rag_service.py) so provision hits the same upstream row.
+    request = get_http_request()
+    authorization = request.headers.get('authorization', '') if request is not None else ''
+    token = authorization.replace('Bearer ', '')
     headers = get_http_headers()
-    token = headers.get('authorization', '').replace('Bearer ', '')
     tenant = await get_tenant(token)
     app_name = headers.get('x-inmydata-rag-app', '').strip() or 'default'
     return f"{tenant}:{app_name}"
@@ -551,6 +559,7 @@ if __name__ == "__main__":
     else:
         # Create the app after tools are registered
         app = mcp.streamable_http_app()
+        app = MCPRequestLogMiddleware(app, oauth=False)
         logger.info("Starting MCP server with streamable-http transport on port %d", port)
         logger.info("Credentials should be passed via headers:")
         logger.info("  Authorization: Your API key, prefixed with 'Bearer '")
