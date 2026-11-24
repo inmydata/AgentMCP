@@ -86,7 +86,7 @@ if INMYDATA_USE_OAUTH:
     #app.mount("/mcp", mcp_app)
     app.add_middleware(MCPPathRewriteMiddleware)
     # Logs client id / tenant for every /mcp request, including 401s.
-    app.add_middleware(MCPRequestLogMiddleware, oauth=True, token_verifier=token_verifier)
+    app.add_middleware(MCPRequestLogMiddleware, oauth=True)
 
     @app.get("/.well-known/mcp.json")
     async def mcp_well_known():

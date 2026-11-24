@@ -254,15 +254,6 @@ class PATAwareJWTVerifier(JWTVerifier):
         # not poison subsequent lookups.
         return None
 
-    def peek_cached(self, token: str) -> Optional[AccessToken]:
-        """Return the cached introspection result for ``token``, or ``None``.
-
-        Never makes a network call. Used by request logging to name the client
-        and tenant behind a PAT that FastMCP has just verified.
-        """
-        kind, cached = self._cache.get(self._cache_key(token))
-        return cached if kind == "hit_positive" else None
-
     @staticmethod
     def _extract_exp(access_token: AccessToken) -> Optional[float]:
         exp = access_token.claims.get("exp") if isinstance(access_token.claims, dict) else None

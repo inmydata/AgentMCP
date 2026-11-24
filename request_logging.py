@@ -13,12 +13,9 @@ keeping them apart stops them being mixed in with real, authenticated traffic.
 
 Identity is worked out without any network calls:
 
-* JWTs: the payload is base64-decoded (not verified) to read ``client_id`` and
-  the tenant claim. On a 2xx response FastMCP has already verified the token;
-  on any other status the claims are marked ``claims=unverified`` because
-  anyone can put anything in an unsigned or forged token.
-* PATs (opaque tokens): the verifier's introspection cache is consulted. FastMCP
-  has just verified the same token, so a valid PAT is normally in the cache.
+* OAuth: the current request's authenticated access token supplies the identity
+  for both JWTs and introspected tokens. Without a matching verified token,
+  any identity decoded from the JWT is marked ``claims=unverified``.
 * Legacy (non-OAuth) mode: the tenant comes from the ``tenant`` query parameter
   or the ``x-inmydata-tenant`` header, as in ``server_remote.utils``.
 
@@ -34,9 +31,10 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import parse_qs
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from starlette.datastructures import Headers
 
-from mcp_logging import logger, token_fingerprint
+from mcp_logging import log_field, logger, token_fingerprint
 
 # The logger captures at most this many bytes while the app consumes the body.
 _MAX_BODY_TO_PARSE = 64 * 1024
@@ -52,6 +50,7 @@ class RequestIdentity:
 
     client_id: Optional[str] = None
     tenant: Optional[str] = None
+    unverified: bool = False
 
 
 def _decode_jwt_claims(token: str) -> Optional[Dict[str, Any]]:
@@ -114,8 +113,6 @@ class MCPRequestLogMiddleware:
         app: The ASGI app to wrap.
         oauth: True when the server runs with OAuth (identity from the token);
             False for legacy mode (identity from the tenant query param/header).
-        token_verifier: The ``PATAwareJWTVerifier`` in OAuth mode, used only to
-            look up PATs in its cache. Optional.
         path_prefix: Requests whose path is this, or starts with it plus ``/``,
             are logged. Everything else is passed straight through.
     """
@@ -125,12 +122,10 @@ class MCPRequestLogMiddleware:
         app: ASGIApp,
         *,
         oauth: bool,
-        token_verifier: Any = None,
         path_prefix: str = "/mcp",
     ) -> None:
         self.app = app
         self.oauth = oauth
-        self.token_verifier = token_verifier
         self.path_prefix = path_prefix.rstrip("/")
 
     def _is_mcp_path(self, path: str) -> bool:
@@ -145,18 +140,15 @@ class MCPRequestLogMiddleware:
             tenant = (query.get("tenant") or [""])[-1] or headers.get("x-inmydata-tenant", "")
             return RequestIdentity(tenant=tenant or None)
 
-        claims = _decode_jwt_claims(token)
-        if claims is not None:
-            return _identity_from_claims(claims)
+        verified = get_access_token()
+        if verified is not None and verified.token == token:
+            identity = _identity_from_claims(getattr(verified, "claims", {}))
+            identity.client_id = verified.client_id or identity.client_id
+            return identity
 
-        peek = getattr(self.token_verifier, "peek_cached", None)
-        if peek is not None:
-            cached = peek(token)
-            if cached is not None:
-                identity = _identity_from_claims(cached.claims or {})
-                identity.client_id = identity.client_id or cached.client_id
-                return identity
-        return RequestIdentity()
+        identity = _identity_from_claims(_decode_jwt_claims(token) or {})
+        identity.unverified = bool(identity.client_id or identity.tenant)
+        return identity
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not self._is_mcp_path(scope.get("path", "")):
@@ -278,12 +270,8 @@ class MCPRequestLogMiddleware:
             raise
 
     def _log(self, scope, headers, token: str, rpc: Optional[str], status: int) -> None:
-        def log_field(value: Any) -> str:
-            return json.dumps(str(value), ensure_ascii=True)[1:-1]
-
         method = log_field(scope.get("method", "-"))
         path = log_field(scope.get("path", "-"))
-        session = log_field(headers.get("mcp-session-id", "-"))
         rpc_field = log_field(rpc or "-")
 
         if not token:
@@ -296,11 +284,9 @@ class MCPRequestLogMiddleware:
             return
 
         identity = self._identity(token, scope, headers)
-        unverified = self.oauth and not (200 <= status < 300) and (identity.client_id or identity.tenant)
         logger.info(
-            "MCP request: %s %s rpc=%s status=%d client_id=%s tenant=%s token=%s session=%s%s",
+            "MCP request: %s %s rpc=%s status=%d client_id=%s tenant=%s token=%s%s",
             method, path, rpc_field, status,
             log_field(identity.client_id or "-"), log_field(identity.tenant or "-"),
-            token_fingerprint(token), session,
-            " claims=unverified" if unverified else "",
+            token_fingerprint(token), " claims=unverified" if identity.unverified else "",
         )

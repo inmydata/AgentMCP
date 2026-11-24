@@ -12,7 +12,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastmcp.server.auth.providers.jwt import AccessToken  # noqa: E402
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware  # noqa: E402
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend  # noqa: E402
 from starlette.datastructures import Headers  # noqa: E402
+from starlette.middleware.authentication import AuthenticationMiddleware  # noqa: E402
 from mcp_logging import logger as agentmcp_logger, token_fingerprint  # noqa: E402
 from mcp_utils import mcp_utils  # noqa: E402
 from request_logging import _MAX_BODY_TO_PARSE, MCPRequestLogMiddleware  # noqa: E402
@@ -228,7 +231,7 @@ async def test_handshake_logs_client_and_tenant_and_replays_body(logs):
     assert seen["body"] == INIT_BODY
     line = logs[0]
     assert "rpc=initialize" in line and "client_id=claude-connector" in line and "tenant=acme" in line
-    assert "unverified" not in line
+    assert "claims=unverified" in line  # The stub app never authenticated the request.
     assert token not in line and token_fingerprint(token) in line
 
 
@@ -280,16 +283,19 @@ async def test_401_with_jwt_marks_claims_unverified(logs):
 
 
 @pytest.mark.asyncio
-async def test_pat_identity_from_verifier_cache(logs):
+@pytest.mark.parametrize("token", ["opaque-pat", _jwt({"client_id": "payload-client", "imd_tenant": "payload-tenant"})])
+async def test_request_logs_verified_identity_not_decoded_claims(logs, token):
     class _Verifier:
-        def peek_cached(self, token):
+        async def verify_token(self, token):
             return AccessToken(token=token, client_id="pat-client", scopes=[], claims={"imd_tenant": "acme"})
 
     app, _ = _app_returning(200)
-    mw = MCPRequestLogMiddleware(app, oauth=True, token_verifier=_Verifier())
+    authenticated = AuthenticationMiddleware(AuthContextMiddleware(app), backend=BearerAuthBackend(_Verifier()))
+    mw = MCPRequestLogMiddleware(authenticated, oauth=True)
     body = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_schema"}}).encode()
-    await _call(mw, headers={"authorization": "Bearer opaque-pat"}, body=body)
+    await _call(mw, headers={"authorization": f"Bearer {token}", "mcp-session-id": "private-session-id"}, body=body)
     assert "client_id=pat-client" in logs[0] and "tenant=acme" in logs[0]
+    assert "claims=unverified" not in logs[0] and "private-session-id" not in logs[0]
     assert "rpc=tools/call:get_schema" in logs[0]
 
 
@@ -442,8 +448,8 @@ async def test_other_paths_not_logged(logs):
 
 
 @pytest.mark.asyncio
-async def test_get_answer_missing_answer_key_returns_clear_error():
-    utils = mcp_utils(api_key="k", tenant="acme", calendar="c", user="u", session_id="s", server="example.com")
+async def test_get_answer_missing_answer_key_returns_clear_error(logs):
+    utils = mcp_utils(api_key="k", tenant="acme\r\nbranch", calendar="c", user="u", session_id="s", server="example.com")
 
     class _BrokenDriver:
         """Stands in for the SDK driver when the question API returns an error body."""
@@ -462,3 +468,5 @@ async def test_get_answer_missing_answer_key_returns_clear_error():
 
     assert "question service returned an error" in result["error"]
     assert "correlation_id" not in result
+    warning, = (line for line in logs if "question API returned no answer" in line)
+    assert r"tenant=acme\r\nbranch" in warning and len(warning.splitlines()) == 1

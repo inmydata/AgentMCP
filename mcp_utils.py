@@ -15,7 +15,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from mcp.server.fastmcp import Context
 import asyncio
 
-from mcp_logging import logger
+from mcp_logging import log_field, logger
 from errors import UserFacingError, tool_error_response
 
 
@@ -679,7 +679,7 @@ class mcp_utils:
                 # KeyError: 'answer'. Turn that into a message the caller can use.
                 logger.warning(
                     "get_answer: question API returned no answer (tenant=%s, missing_key=%s)",
-                    self.tenant, exc.args[0] if exc.args else "-",
+                    log_field(self.tenant), log_field(exc.args[0] if exc.args else "-"),
                 )
                 raise UserFacingError(
                     "The inmydata question service returned an error instead of an answer. "

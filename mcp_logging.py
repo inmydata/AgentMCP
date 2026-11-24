@@ -13,6 +13,7 @@ See GHSA-3x42-7cvw-r9jv (issue #5).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -42,6 +43,11 @@ def configure_logging(default_level: str = "INFO") -> None:
         )
         logger.addHandler(handler)
         logger.propagate = False
+
+
+def log_field(value: Any) -> str:
+    """Escape a request-controlled value for single-line text logs."""
+    return json.dumps(str(value), ensure_ascii=True)[1:-1]
 
 
 def token_fingerprint(token: str | None) -> str:
