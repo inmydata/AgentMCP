@@ -193,7 +193,15 @@ class MCPRequestLogMiddleware:
                     logger.debug("MCP request logging failed", exc_info=True)
             await send(message)
 
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            if not logged:
+                try:
+                    self._log(scope, headers, token, rpc, 500)
+                except Exception:
+                    logger.debug("MCP request logging failed", exc_info=True)
+            raise
 
     def _log(self, scope, headers, token: str, rpc: Optional[str], status: int) -> None:
         method = scope.get("method", "-")
