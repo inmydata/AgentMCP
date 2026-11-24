@@ -135,8 +135,8 @@ class MCPRequestLogMiddleware:
 
     def _identity(self, token: str, scope: Dict[str, Any], headers: Dict[str, str]) -> RequestIdentity:
         if not self.oauth:
-            query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
-            tenant = (query.get("tenant") or [""])[0] or headers.get("x-inmydata-tenant", "")
+            query = parse_qs(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True)
+            tenant = (query.get("tenant") or [""])[-1] or headers.get("x-inmydata-tenant", "")
             return RequestIdentity(tenant=tenant or None)
 
         claims = _decode_jwt_claims(token)
