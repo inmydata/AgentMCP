@@ -39,6 +39,7 @@ TEST_TENANT = "test"
 @pytest.fixture
 def duckdb_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("MCP_DUCKDB_LOCATION", str(tmp_path))
+    monkeypatch.delenv("MCP_SAMPLE_ROWS", raising=False)
     return tmp_path
 
 
