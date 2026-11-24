@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastmcp.server.auth.providers.jwt import AccessToken  # noqa: E402
 from mcp_logging import logger as agentmcp_logger, token_fingerprint  # noqa: E402
 from mcp_utils import mcp_utils  # noqa: E402
-from request_logging import MCPRequestLogMiddleware  # noqa: E402
+from request_logging import _MAX_BODY_TO_PARSE, MCPRequestLogMiddleware  # noqa: E402
 
 
 @pytest.fixture
@@ -126,6 +126,137 @@ async def test_legacy_mode_logs_tenant_from_query(logs):
     mw = MCPRequestLogMiddleware(app, oauth=False)
     await _call(mw, headers={"authorization": "Bearer key"}, body=INIT_BODY, query=b"tenant=acme")
     assert "tenant=acme" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_legacy_no_token_logs_tenant_from_query_or_header(logs):
+    app, _ = _app_returning(200)
+    mw = MCPRequestLogMiddleware(app, oauth=False)
+
+    await _call(mw, body=INIT_BODY, query=b"tenant=query-tenant")
+    await _call(mw, headers={"x-inmydata-tenant": "header-tenant"}, body=INIT_BODY)
+
+    assert "tenant=query-tenant" in logs[0]
+    assert "tenant=header-tenant" in logs[1]
+
+
+@pytest.mark.asyncio
+async def test_request_body_is_streamed_and_capture_is_bounded(logs):
+    first_body = INIT_BODY
+    oversized_body = b" " * (_MAX_BODY_TO_PARSE + 1)
+    messages = [
+        {"type": "http.request", "body": first_body, "more_body": True},
+        {"type": "http.request", "body": oversized_body, "more_body": False},
+    ]
+    received = []
+    receive_count = 0
+
+    async def receive():
+        nonlocal receive_count
+        message = messages[receive_count]
+        receive_count += 1
+        return message
+
+    async def app(scope, app_receive, send):
+        assert receive_count == 0
+        for _ in messages:
+            received.append(await app_receive())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    async def send(message):
+        pass
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    scope = {
+        "type": "http", "method": "POST", "path": "/mcp", "query_string": b"",
+        "headers": [], "client": ("10.0.0.1", 1234),
+    }
+
+    await mw(scope, receive, send)
+
+    assert received == messages
+    assert "rpc=-" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_is_passed_through_without_completing_truncated_body(logs):
+    messages = [
+        {"type": "http.request", "body": INIT_BODY, "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+    received = []
+    index = 0
+
+    async def receive():
+        nonlocal index
+        message = messages[index]
+        index += 1
+        return message
+
+    async def app(scope, app_receive, send):
+        received.extend([await app_receive(), await app_receive()])
+        await send({"type": "http.response.start", "status": 400, "headers": []})
+
+    async def send(message):
+        pass
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    scope = {
+        "type": "http", "method": "POST", "path": "/mcp", "query_string": b"",
+        "headers": [], "client": ("10.0.0.1", 1234),
+    }
+
+    await mw(scope, receive, send)
+
+    assert received == messages
+    assert "rpc=-" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_exception_before_response_start_logs_fallback_500_and_reraises(logs):
+    async def app(scope, receive, send):
+        raise RuntimeError("downstream failure")
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+
+    with pytest.raises(RuntimeError, match="downstream failure"):
+        await _call(mw, body=INIT_BODY)
+
+    assert len(logs) == 1
+    assert "status=500" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_request_controlled_log_fields_are_escaped(logs):
+    app, _ = _app_returning(401)
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    token = _jwt({
+        "client_id": "untrusted\nclient",
+        "client_imd_tenant": "untrusted\r\ntenant",
+    })
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize\nforged",
+    }).encode()
+
+    await _call(
+        mw,
+        headers={"authorization": f"Bearer {token}"},
+        body=body,
+    )
+
+    assert "\n" not in logs[0] and "\r" not in logs[0]
+    assert "\\n" in logs[0] and "\\r" in logs[0]
+
+    legacy_app, _ = _app_returning(200)
+    legacy_mw = MCPRequestLogMiddleware(legacy_app, oauth=False)
+    await _call(
+        legacy_mw,
+        headers={"x-inmydata-tenant": "untrusted\r\ntenant", "user-agent": "agent\nforged"},
+        body=INIT_BODY,
+    )
+
+    assert "\n" not in logs[1] and "\r" not in logs[1]
+    assert "\\n" in logs[1] and "\\r" in logs[1]
 
 
 @pytest.mark.asyncio

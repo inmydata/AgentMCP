@@ -34,8 +34,7 @@ from urllib.parse import parse_qs
 
 from mcp_logging import logger, token_fingerprint
 
-# Only this many bytes of a POST body are parsed to find the JSON-RPC method.
-# The body is always passed on to the app in full.
+# The logger captures at most this many bytes while the app consumes the body.
 _MAX_BODY_TO_PARSE = 64 * 1024
 
 ASGIApp = Callable[..., Awaitable[None]]
@@ -161,24 +160,36 @@ class MCPRequestLogMiddleware:
         auth_header = headers.get("authorization", "").strip()
         token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else auth_header
 
-        # Buffer a POST body so the JSON-RPC method can be logged, then replay it.
-        rpc = None
+        request_body = bytearray()
+        request_body_size = 0
+        request_body_complete = False
+        request_body_too_large = False
+
         if scope.get("method") == "POST":
-            chunks: List[bytes] = []
-            more = True
-            while more:
-                message = await receive()
-                if message["type"] != "http.request":
-                    # Client went away mid-body; hand the app what we have plus this.
-                    pending = [{"type": "http.request", "body": b"".join(chunks), "more_body": False}, message]
-                    receive = _replay(pending, receive)
-                    break
-                chunks.append(message.get("body", b""))
-                more = message.get("more_body", False)
-            else:
-                body = b"".join(chunks)
-                rpc = _rpc_summary(body)
-                receive = _replay([{"type": "http.request", "body": body, "more_body": False}], receive)
+            original_receive = receive
+
+            async def receive_wrapper():
+                nonlocal request_body_size, request_body_complete, request_body_too_large
+                message = await original_receive()
+                if message["type"] == "http.request":
+                    chunk = message.get("body", b"")
+                    if not request_body_too_large:
+                        if request_body_size + len(chunk) > _MAX_BODY_TO_PARSE:
+                            request_body.clear()
+                            request_body_too_large = True
+                        elif chunk:
+                            request_body.extend(chunk)
+                            request_body_size += len(chunk)
+                    if not message.get("more_body", False):
+                        request_body_complete = True
+                return message
+
+            receive = receive_wrapper
+
+        def rpc_summary() -> Optional[str]:
+            if not request_body_complete or request_body_too_large:
+                return None
+            return _rpc_summary(bytes(request_body))
 
         logged = False
 
@@ -187,7 +198,7 @@ class MCPRequestLogMiddleware:
             if message["type"] == "http.response.start" and not logged:
                 logged = True
                 try:
-                    self._log(scope, headers, token, rpc, message.get("status", 0))
+                    self._log(scope, headers, token, rpc_summary(), message.get("status", 0))
                 except Exception:
                     # Logging must never break a request.
                     logger.debug("MCP request logging failed", exc_info=True)
@@ -198,7 +209,7 @@ class MCPRequestLogMiddleware:
         except Exception:
             if not logged:
                 try:
-                    self._log(scope, headers, token, rpc, 500)
+                    self._log(scope, headers, token, rpc_summary(), 500)
                 except Exception:
                     logger.debug("MCP request logging failed", exc_info=True)
             raise
@@ -213,10 +224,11 @@ class MCPRequestLogMiddleware:
         rpc_field = log_field(rpc or "-")
 
         if not token:
+            tenant = self._identity(token, scope, headers).tenant if not self.oauth else None
             logger.info(
-                "MCP request without token: %s %s rpc=%s status=%d ip=%s user_agent=%r",
-                method, path, rpc_field, status, log_field(_client_ip(headers, scope)),
-                headers.get("user-agent", "-"),
+                "MCP request without token: %s %s rpc=%s status=%d tenant=%s ip=%s user_agent=%s",
+                method, path, rpc_field, status, log_field(tenant or "-"),
+                log_field(_client_ip(headers, scope)), log_field(headers.get("user-agent", "-")),
             )
             return
 
@@ -229,15 +241,3 @@ class MCPRequestLogMiddleware:
             token_fingerprint(token), session,
             " claims=unverified" if unverified else "",
         )
-
-
-def _replay(messages: List[Dict[str, Any]], receive):
-    """Return a ``receive`` callable that yields ``messages`` first, then defers to ``receive``."""
-    queue = list(messages)
-
-    async def replay_receive():
-        if queue:
-            return queue.pop(0)
-        return await receive()
-
-    return replay_receive
