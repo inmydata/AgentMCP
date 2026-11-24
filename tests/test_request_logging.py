@@ -1,4 +1,5 @@
 """Tests for per-request MCP logging and the get_answer KeyError handling."""
+import asyncio
 import base64
 import json
 import logging
@@ -71,6 +72,21 @@ async def _call(middleware, *, path="/mcp", method="POST", headers=None, body=b"
     return sent
 
 
+async def _call_with_receive(middleware, receive, *, headers=None):
+    raw_headers = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    scope = {
+        "type": "http", "method": "POST", "path": "/mcp", "query_string": b"",
+        "headers": raw_headers, "client": ("10.0.0.1", 1234),
+    }
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    await middleware(scope, receive, send)
+    return sent
+
+
 INIT_BODY = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).encode()
 
 
@@ -82,6 +98,124 @@ async def test_no_token_gets_its_own_line(logs):
     assert len(logs) == 1
     assert logs[0].startswith("MCP request without token:")
     assert "rpc=initialize" in logs[0] and "status=401" in logs[0] and "zgrab" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_401_without_reading_body_still_logs_rpc(logs):
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    await _call(mw, body=INIT_BODY)
+
+    assert "rpc=initialize" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_401_capture_replays_complete_body_to_app(logs):
+    messages = [
+        {"type": "http.request", "body": INIT_BODY[:16], "more_body": True},
+        {"type": "http.request", "body": INIT_BODY[16:], "more_body": False},
+    ]
+    replayed = []
+    index = 0
+
+    async def receive():
+        nonlocal index
+        message = messages[index]
+        index += 1
+        return message
+
+    async def app(scope, app_receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        replayed.extend([await app_receive(), await app_receive()])
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    await _call_with_receive(mw, receive)
+
+    assert "rpc=initialize" in logs[0]
+    assert replayed == messages
+
+
+@pytest.mark.asyncio
+async def test_401_capture_stops_at_body_limit_and_replays_remaining_stream(logs):
+    messages = [
+        {"type": "http.request", "body": b"x" * (_MAX_BODY_TO_PARSE + 1), "more_body": True},
+        {"type": "http.request", "body": b"tail", "more_body": False},
+    ]
+    replayed = []
+    index = 0
+
+    async def receive():
+        nonlocal index
+        message = messages[index]
+        index += 1
+        return message
+
+    async def app(scope, app_receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        replayed.extend([await app_receive(), await app_receive()])
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    await _call_with_receive(mw, receive)
+
+    assert "rpc=-" in logs[0]
+    assert replayed == messages
+
+
+@pytest.mark.asyncio
+async def test_401_capture_replays_disconnect_without_completing_body(logs):
+    messages = [
+        {"type": "http.request", "body": INIT_BODY, "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+    replayed = []
+    index = 0
+
+    async def receive():
+        nonlocal index
+        message = messages[index]
+        index += 1
+        return message
+
+    async def app(scope, app_receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        replayed.extend([await app_receive(), await app_receive()])
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    await _call_with_receive(mw, receive)
+
+    assert "rpc=-" in logs[0]
+    assert replayed == messages
+
+
+@pytest.mark.asyncio
+async def test_401_capture_times_out_and_replays_partial_body(logs, monkeypatch):
+    monkeypatch.setattr("request_logging._EARLY_REJECTION_CAPTURE_TIMEOUT_SECONDS", 0.01)
+    first = {"type": "http.request", "body": INIT_BODY[:-1], "more_body": True}
+    replayed = []
+    receive_calls = 0
+    stalled = asyncio.Event()
+
+    async def receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        if receive_calls == 1:
+            return first
+        await stalled.wait()
+
+    async def app(scope, app_receive, send):
+        await send({"type": "http.response.start", "status": 401, "headers": []})
+        replayed.append(await app_receive())
+
+    mw = MCPRequestLogMiddleware(app, oauth=True)
+    await asyncio.wait_for(_call_with_receive(mw, receive), timeout=1)
+
+    assert receive_calls == 2
+    assert replayed == [first]
+    assert "status=401" in logs[0] and "rpc=-" in logs[0]
 
 
 @pytest.mark.asyncio

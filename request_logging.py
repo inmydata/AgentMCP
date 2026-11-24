@@ -26,8 +26,10 @@ The raw token is never logged; ``token_fingerprint`` is used instead.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import parse_qs
@@ -36,6 +38,8 @@ from mcp_logging import logger, token_fingerprint
 
 # The logger captures at most this many bytes while the app consumes the body.
 _MAX_BODY_TO_PARSE = 64 * 1024
+_EARLY_REJECTION_CAPTURE_TIMEOUT_SECONDS = 0.1
+_MAX_EARLY_REJECTION_CAPTURE_EVENTS = 128
 
 ASGIApp = Callable[..., Awaitable[None]]
 
@@ -164,27 +168,74 @@ class MCPRequestLogMiddleware:
         request_body_size = 0
         request_body_complete = False
         request_body_too_large = False
+        pending_messages = deque()
+        original_receive = receive
 
         if scope.get("method") == "POST":
-            original_receive = receive
+            receive_lock = asyncio.Lock()
+
+            def record_request_message(message):
+                nonlocal request_body_size, request_body_complete, request_body_too_large
+                if message["type"] != "http.request":
+                    return
+                chunk = message.get("body", b"")
+                if not request_body_too_large:
+                    if request_body_size + len(chunk) > _MAX_BODY_TO_PARSE:
+                        request_body.clear()
+                        request_body_too_large = True
+                    elif chunk:
+                        request_body.extend(chunk)
+                        request_body_size += len(chunk)
+                if not message.get("more_body", False):
+                    request_body_complete = True
 
             async def receive_wrapper():
-                nonlocal request_body_size, request_body_complete, request_body_too_large
-                message = await original_receive()
-                if message["type"] == "http.request":
-                    chunk = message.get("body", b"")
-                    if not request_body_too_large:
-                        if request_body_size + len(chunk) > _MAX_BODY_TO_PARSE:
-                            request_body.clear()
-                            request_body_too_large = True
-                        elif chunk:
-                            request_body.extend(chunk)
-                            request_body_size += len(chunk)
-                    if not message.get("more_body", False):
-                        request_body_complete = True
-                return message
+                async with receive_lock:
+                    if pending_messages:
+                        return pending_messages.popleft()
+                    message = await original_receive()
+                    record_request_message(message)
+                    return message
 
             receive = receive_wrapper
+
+            async def capture_body_before_rejection():
+                if request_body_complete or request_body_too_large:
+                    return
+
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + _EARLY_REJECTION_CAPTURE_TIMEOUT_SECONDS
+                captured = []
+                try:
+                    await asyncio.wait_for(
+                        receive_lock.acquire(),
+                        timeout=max(0, deadline - loop.time()),
+                    )
+                except asyncio.TimeoutError:
+                    return
+
+                try:
+                    for _ in range(_MAX_EARLY_REJECTION_CAPTURE_EVENTS):
+                        if request_body_complete or request_body_too_large:
+                            break
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            break
+                        try:
+                            message = await asyncio.wait_for(original_receive(), timeout=remaining)
+                        except asyncio.TimeoutError:
+                            break
+                        except Exception:
+                            logger.debug("MCP request body capture before 401 failed", exc_info=True)
+                            break
+
+                        captured.append(message)
+                        record_request_message(message)
+                        if message["type"] != "http.request" or request_body_complete or request_body_too_large:
+                            break
+                finally:
+                    pending_messages.extend(captured)
+                    receive_lock.release()
 
         def rpc_summary() -> Optional[str]:
             if not request_body_complete or request_body_too_large:
@@ -196,6 +247,11 @@ class MCPRequestLogMiddleware:
         async def send_wrapper(message):
             nonlocal logged
             if message["type"] == "http.response.start" and not logged:
+                if scope.get("method") == "POST" and message.get("status") == 401:
+                    try:
+                        await capture_body_before_rejection()
+                    except Exception:
+                        logger.debug("MCP request body capture before 401 failed", exc_info=True)
                 logged = True
                 try:
                     self._log(scope, headers, token, rpc_summary(), message.get("status", 0))
