@@ -176,6 +176,27 @@ The cache file contains plaintext tenant API keys so the server does not burn on
 
 If the file is deleted or a new replica starts without access to it, the first call per tenant re-mints a key. Over time that can exhaust the 20-key limit; on exhaustion the tool returns an operator-actionable error and an admin must revoke stale keys via the admin API.
 
+## Testing
+
+```bash
+uv sync --extra test
+uv run pytest
+```
+
+This runs the unit tests, which replace the inmydata API with fakes.
+
+### Live tests against the local dev API
+
+`tests/integration/` calls a local copy of the inmydata API at `https://dev.inmydata.com` through both servers: `server.py` over stdio, and `server_remote.py` over streamable HTTP. These tests are skipped unless you pass `--integration`.
+
+1. Make sure your hosts file has `127.0.0.1 dev.inmydata.com` and the local API is running. The tests refuse to run if the hostname resolves anywhere other than this machine, so they can't reach the real service by accident.
+2. Copy `.env.test.example` to `.env.test` (git-ignored) and set `INMYDATA_API_KEY` to a key for the `dev` tenant.
+3. Run `uv run pytest --integration -m integration`.
+
+The local site's certificate is trusted by Windows but not by Python's own certificate list. The servers are started through `tests/integration/_launch_server.py`, which uses `truststore` so that Python checks certificates against the Windows store. Certificate checking stays on.
+
+The servers report API failures to the caller only as `internal error` with a correlation ID. The full error is in the remote server's log, under pytest's temporary folder: `%TEMP%\pytest-of-<your user>\pytest-current\mcp-server-cwd0\server_remote.log` on Windows.
+
 ## Deployment
 
 ### Docker Deployment
