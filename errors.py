@@ -92,7 +92,7 @@ def _api_message(body: str) -> str:
         try:
             problem = json.loads(text)
         except ValueError:
-            problem = None
+            return ""
         if isinstance(problem, dict):
             errors = problem.get("errors")
             if problem.get("detail"):
