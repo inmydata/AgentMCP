@@ -15,7 +15,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--integration",
         action="store_true",
         default=False,
-        help="Run tests marked 'integration', which call the local dev inmydata API.",
+        help="Run tests marked 'integration', which call an inmydata API.",
+    )
+    parser.addoption(
+        "--integration-target",
+        choices=("local", "test"),
+        default="local",
+        help="API target for live integration tests (default: local).",
     )
 
 

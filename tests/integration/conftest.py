@@ -1,4 +1,4 @@
-"""Fixtures for live tests of the MCP servers against the local dev inmydata API.
+"""Fixtures for live tests of the MCP servers against local or test APIs.
 
 Each test module here sets ``pytestmark = pytest.mark.integration``, so its
 tests are skipped unless pytest is run with ``--integration`` (see
@@ -42,7 +42,7 @@ SERVER_START_TIMEOUT_S = 60
 
 @dataclass(frozen=True)
 class DevApiSettings:
-    """Connection settings for the dev API, read from ``.env.test``."""
+    """Connection settings for the API, read from ``.env.test``."""
 
     api_key: str
     tenant: str
@@ -55,43 +55,50 @@ class DevApiSettings:
         return f"{self.tenant}.{self.server}"
 
 
-def _assert_host_is_loopback(host: str) -> None:
-    """Fail unless every address ``host`` resolves to is a loopback address.
-
-    The tests only reach the local copy of the API because the hosts file
-    points the real hostname at 127.0.0.1. Without that entry they would call
-    the real service, so refuse to run.
-    """
+def _assert_api_target(host: str, target: str) -> None:
+    """Check that the configured host is safe for the selected target."""
+    if target not in ("local", "test"):
+        pytest.fail(f"Unknown integration target: {target}")
+    if target == "test" and host != "test.test-inmydata.com":
+        pytest.fail("Test mode requires TEST_INMYDATA_TENANT=test and TEST_INMYDATA_SERVER=test-inmydata.com")
     try:
         infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        pytest.fail(f"{host} does not resolve ({exc}); add it to your hosts file as 127.0.0.1")
+        pytest.fail(f"{host} does not resolve ({exc})")
     addresses = {info[4][0] for info in infos}
-    not_local = sorted(a for a in addresses if not ipaddress.ip_address(a).is_loopback)
-    if not_local:
+    if not addresses:
+        pytest.fail(f"{host} did not resolve to any addresses")
+    if target == "local" and any(not ipaddress.ip_address(a).is_loopback for a in addresses):
         pytest.fail(
-            f"{host} resolves to {', '.join(not_local)}, not to this machine. "
-            "These tests must only call the local dev API; add a hosts file "
-            f"entry '127.0.0.1 {host}'."
+            f"{host} does not resolve exclusively to this machine. "
+            f"For local mode, add a hosts file entry '127.0.0.1 {host}'."
         )
+    if target == "test" and any(ipaddress.ip_address(a).is_loopback for a in addresses):
+        pytest.fail(f"{host} resolves to this machine; test mode requires the test server")
 
 
 @pytest.fixture(scope="session")
-def dev_api() -> DevApiSettings:
-    """Load ``.env.test`` and check the API host points at this machine."""
+def dev_api(request: pytest.FixtureRequest) -> DevApiSettings:
+    """Load ``.env.test`` and verify the host matches the selected target."""
     if not ENV_FILE.exists():
-        pytest.fail(f"{ENV_FILE.name} not found; copy .env.test.example and add the dev API key")
+        pytest.fail(f"{ENV_FILE.name} not found; copy .env.test.example and add the API key")
     values = dotenv_values(ENV_FILE)
-    api_key = (values.get("INMYDATA_API_KEY") or "").strip()
+    target = request.config.getoption("--integration-target")
+    prefix = f"{target.upper()}_INMYDATA_"
+    if target == "local" and not any(key.startswith(prefix) for key in values):
+        prefix = "INMYDATA_"
+    api_key = (values.get(f"{prefix}API_KEY") or "").strip()
     if not api_key or api_key == "your_dev_api_key_here":
-        pytest.fail(f"INMYDATA_API_KEY is not set in {ENV_FILE.name}")
+        pytest.fail(f"{prefix}API_KEY is not set in {ENV_FILE.name}")
     settings = DevApiSettings(
         api_key=api_key,
-        tenant=(values.get("INMYDATA_TENANT") or "dev").strip(),
-        server=(values.get("INMYDATA_SERVER") or "inmydata.com").strip(),
-        calendar=(values.get("INMYDATA_CALENDAR") or "Default").strip(),
+        tenant=(values.get(f"{prefix}TENANT") or ("dev" if target == "local" else "test")).strip(),
+        server=(values.get(f"{prefix}SERVER") or (
+            "inmydata.com" if target == "local" else "test-inmydata.com"
+        )).strip(),
+        calendar=(values.get(f"{prefix}CALENDAR") or "Default").strip(),
     )
-    _assert_host_is_loopback(settings.host)
+    _assert_api_target(settings.host, target)
     return settings
 
 

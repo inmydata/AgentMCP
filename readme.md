@@ -185,13 +185,15 @@ uv run pytest
 
 This runs the unit tests, which replace the inmydata API with fakes.
 
-### Live tests against the local dev API
+### Live integration tests
 
-`tests/integration/` calls a local copy of the inmydata API at `https://dev.inmydata.com` through both servers: `server.py` over stdio, and `server_remote.py` over streamable HTTP. These tests are skipped unless you pass `--integration`.
+`tests/integration/` calls the API through both MCP servers: `server.py` over stdio, and `server_remote.py` over streamable HTTP. The tests are skipped unless you pass `--integration`. Copy `.env.test.example` to `.env.test` (git-ignored) and configure the separate local and test settings and API keys:
 
-1. Make sure your hosts file has `127.0.0.1 dev.inmydata.com` and the local API is running. The tests refuse to run if the hostname resolves anywhere other than this machine, so they can't reach the real service by accident.
-2. Copy `.env.test.example` to `.env.test` (git-ignored) and set `INMYDATA_API_KEY` to a key for the `dev` tenant.
-3. Run `uv run pytest --integration -m integration`.
+- **Local (default):** Set `LOCAL_INMYDATA_API_KEY` to a key for the dev tenant. Start the local API and add `127.0.0.1 dev.inmydata.com` to your hosts file. The tests refuse to run if any resolved address is not loopback.
+  Run `uv run pytest --integration -m integration`.
+- **Test server:** Set `TEST_INMYDATA_API_KEY` to a key for the test tenant. Run `uv run pytest --integration -m integration --integration-target=test`. Test mode only accepts `test.test-inmydata.com` and refuses loopback addresses.
+
+Both sets of settings can remain in `.env.test`; never commit it. Existing unprefixed `INMYDATA_*` settings still work for local mode if no `LOCAL_INMYDATA_*` settings are present. Both modes use the same fixed dev dataset and calendar assertions. If the test server has different data, those assertions may fail.
 
 The local site's certificate is trusted by Windows but not by Python's own certificate list. The servers are started through `tests/integration/_launch_server.py`, which uses `truststore` so that Python checks certificates against the Windows store. Certificate checking stays on.
 

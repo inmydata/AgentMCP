@@ -26,5 +26,5 @@ test = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "integration: calls the local dev inmydata API; skipped unless pytest is run with --integration",
+    "integration: calls an inmydata API; skipped unless pytest is run with --integration",
 ]

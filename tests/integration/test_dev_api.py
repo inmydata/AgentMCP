@@ -1,4 +1,4 @@
-"""Live tests of both MCP servers against the local dev inmydata API.
+"""Live tests of both MCP servers against local or test inmydata APIs.
 
 Each test runs once per server (``local-stdio`` and ``remote-http``, see the
 ``mcp_client`` fixture) and calls the tools through the MCP protocol, so the
