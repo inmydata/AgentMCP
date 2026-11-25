@@ -145,6 +145,8 @@ def describe_error(exc: BaseException, *, context: str) -> Optional[str]:
     if isinstance(exc, InmydataAPIError):
         # Other 4xx (400, 404, 409, 422, ...): the API's own message, if any.
         status = exc.status_code
+        if not isinstance(status, int) or not 400 <= status < 500:
+            return None
         api_text = _api_message(_response_body(exc))
         if api_text:
             message = f"The inmydata API rejected the request (HTTP {status}): {api_text}"
