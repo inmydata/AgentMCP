@@ -698,6 +698,18 @@ class TestGetFinancialPeriods:
         assert result["date"] == "2024-03-05"
         assert json.loads(result["periods"]) == periods
 
+    async def test_converts_the_sdk_period_object_to_json(self, utils_instance, monkeypatch):
+        # Arrange
+        _install_calendar_assistant(
+            monkeypatch, periods=FinancialPeriodDetails(year=2025, month=6, week=24, quarter=2),
+        )
+
+        # Act
+        result = json.loads(await utils_instance.get_financial_periods("2025-06-15"))
+
+        # Assert
+        assert json.loads(result["periods"]) == {"year": 2025, "month": 6, "week": 24, "quarter": 2}
+
     async def test_uses_todays_date_when_none_is_given(self, utils_instance, monkeypatch):
         # Arrange
         _install_calendar_assistant(monkeypatch, periods={"year": 2024})
@@ -966,16 +978,6 @@ class TestGetCalendarPeriodDateRangeDefaults:
         # Assert
         assert result == {"error": "Could not determine financial_year"}
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "SDK bug: the real CalendarAssistant returns a FinancialPeriodDetails object "
-            "(attributes year/month/week/quarter) that json.dumps cannot serialise, so "
-            "get_financial_periods falls back to str(), which get_calendar_period_date_range then "
-            "fails to parse and treats as {}. Calling with no arguments therefore always says it "
-            "cannot determine the year. Remove this marker once the SDK object is serialisable."
-        ),
-    )
     async def test_defaults_to_the_current_month_with_the_real_period_object(self, utils_instance, monkeypatch):
         # Arrange
         _install_calendar_assistant(

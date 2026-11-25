@@ -8,6 +8,7 @@ inmydata SDK and the API.
 Run with: ``uv run pytest --integration -m integration``
 """
 import json
+from datetime import date
 from typing import Any
 
 import pytest
@@ -60,13 +61,6 @@ async def test_get_schema_returns_subjects(mcp_client: Client) -> None:
         assert "fieldGroups" in subject
 
 
-FINANCIAL_PERIODS_BUG = (
-    "mcp_utils.get_financial_periods cannot JSON-encode the SDK's "
-    "FinancialPeriodDetails object, so it returns its repr() as the 'periods' string"
-)
-
-
-@pytest.mark.xfail(reason=FINANCIAL_PERIODS_BUG, strict=True)
 async def test_get_financial_periods_for_a_fixed_date(mcp_client: Client) -> None:
     async with mcp_client as client:
         result = await call_json(client, "get_financial_periods", {"target_date": "2025-06-15"})
@@ -93,19 +87,17 @@ async def test_get_calendar_period_date_range_for_a_fixed_period(mcp_client: Cli
     }
 
 
-@pytest.mark.xfail(
-    reason="the no-argument defaults are read from get_financial_periods' 'periods' "
-    "string, which is not JSON (" + FINANCIAL_PERIODS_BUG + ")",
-    strict=True,
-)
 async def test_get_calendar_period_date_range_defaults_to_the_current_month(
     mcp_client: Client,
 ) -> None:
     async with mcp_client as client:
+        today = json.loads((await call_json(client, "get_financial_periods"))["periods"])
         result = await call_json(client, "get_calendar_period_date_range")
 
+    assert result["financial_year"] == today["year"]
+    assert result["period_number"] == today["month"]
     assert result["period_type"] == "month"
-    assert result["start_date"] < result["end_date"]
+    assert result["start_date"] <= date.today().isoformat() <= result["end_date"]
 
 
 # --- Data tools ---------------------------------------------------------------

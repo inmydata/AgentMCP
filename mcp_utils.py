@@ -919,13 +919,18 @@ class mcp_utils:
 
             periods = assistant.get_financial_periods(dt)
 
-            # Convert SDK/domain objects to JSON-serializable primitives
-            try:
-                serializable = json.dumps(periods)
-            except Exception:
-                serializable = str(periods)
+            # The SDK returns a FinancialPeriodDetails object, which json.dumps
+            # cannot encode. Copy its fields into a dict; get_calendar_period_date_range
+            # (here and in both servers) reads these same keys for its defaults.
+            if not isinstance(periods, dict):
+                periods = {
+                    "year": periods.year,
+                    "month": periods.month,
+                    "week": periods.week,
+                    "quarter": periods.quarter,
+                }
 
-            return json.dumps({"periods": serializable, "date": dt.isoformat()})
+            return json.dumps({"periods": json.dumps(periods), "date": dt.isoformat()})
 
         except UserFacingError as exc:
             return json.dumps({"error": str(exc)})
