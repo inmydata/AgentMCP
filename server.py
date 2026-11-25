@@ -7,7 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Context
 from mcp_utils import mcp_utils
 from mcp_logging import configure_logging
-from errors import UserFacingError, tool_error_response
+from errors import UserFacingError, tool_error_message, tool_error_response
 import agentic_rag_tool
 
 load_dotenv(".env", override=True)
@@ -46,31 +46,34 @@ async def get_rows_fast(
     ctx: Optional[Context] = None
 ) -> str:
     """
-    FAST PATH (recommended).
+    FAST PATH (recommended) for fetching rows of data.
     Use when the request names specific fields and simple filters (no free-form reasoning).
-    Returns rows immediately from the warehouse; far faster and cheaper than get_answer.
-    If the output json contains property row_count wil a value less than or equal
-    to 10 then the data property can be used as the answer. 
-    If the output json contains a non blank value for the instance_id property 
-    then the data property will only contain a sample of the data and the full data set 
-    can be found in a table named my_table in a DuckDB database file saved on disk. 
-    In that case you MUST use the query_results_fast tool to query the results with SQL
-    to get the data you need to answer the question. This is the only way to access larger datasets.    
+    Far faster and cheaper than get_answer_slow.
 
-    Examples:
-    - "Give me the specific average transaction value and profit margin percentage for each region in 2025"
-      -> get_rows(
-           subject="Sales",
-           select=["Region", "Average Transaction Value", "Profit Margin %"],
-           where=[{"field":"Financial Year","op":"equals","value":2025, "logical":"AND"}],
-         )
+    Before calling, call get_schema and take the subject and field names from it:
+    - subject must be one of the subject names in get_schema.
+    - Every field in select and where must be a key of that subject's factFieldTypes
+      (dimensions) or metricFieldTypes (metrics), spelt exactly as in the schema,
+      including case and spaces.
+    - If the result is an error naming a subject or field, correct the name from
+      get_schema. Do not guess other spellings.
 
-    where items: [{"field":"Region","op":"equals","value":"North","logical":"AND"}, {"field":"Sales Value","op":"gte","value":1000,"logical":"AND"}]
-    Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
-    Allows logical: AND, OR (default is AND). This is the logical join between multiple conditions.
-    The summary flag indicates if the data request should use a summary query which will summarize the data based on the fields specified. This is useful when datasets are large and summary=True is the default. If summary flag is set to false then it allows data to be read without being summarized.
-    The system property comes from the value of the system key in the dict of the selected subject. It should ONLY come from that value. The value above is an example only.
-    The select list should only contain values that have keys in the factFieldTypes or metricFieldTypes dict of the selected subject    
+    Results:
+    - row_count is the total number of rows. If instance_id is blank, data holds them all.
+    - If instance_id is not blank, data holds only a sample and the full result is in a
+      table called my_table. You MUST use query_results_fast with that instance_id and SQL
+      to read it; this is the only way to access larger results.
+
+    where is a list of conditions, for example:
+      [{"field": "Region", "op": "equals", "value": "North", "logical": "AND"},
+       {"field": "Sales Value", "op": "gte", "value": 1000, "logical": "AND"}]
+    Allowed op values: equals, contains, not_contains, starts_with, gt, lt, gte, lte.
+    Allowed logical values: AND, OR (default AND), joining a condition to the previous one.
+
+    Example (the names are illustrative; use the names in get_schema):
+    "Sales and profit by region in financial year 2025"
+      -> get_rows_fast(subject="Sales", select=["Region", "Sales Value", "Profit"],
+                       where=[{"field": "Financial Year", "op": "equals", "value": 2025}])
     """
     try:
         if not subject:
@@ -93,21 +96,27 @@ async def get_top_n_fast(
     ctx: Optional[Context] = None
 ) -> str:
    """
-    FAST PATH for rankings and leaderboards.
+    FAST PATH for rankings: the top or bottom n values of one field, ranked by a metric.
     Use when the user asks for "top/bottom N" by a metric (no free-form reasoning).
-    Much faster and cheaper than get_answer.
-    If the output json contains property row_count wil a value less than or equal
-    to 10 then the data property can be used as the answer. 
-    If the output json contains a non blank value for the instance_id property 
-    then the data property will only contain a sample of the data and the full data set 
-    can be found in a table named my_table in a DuckDB database file saved on disk.  
-    In that case you MUST use the query_results_fast tool to query the results with SQL
-    to get the data you need to answer the question. This is the only way to access larger datasets.     
+    Far faster and cheaper than get_answer_slow.
 
-    Example:
-    - "Top 10 regions by profit margin in 2025"
-      -> get_top_n(subject="Sales", group_by="Region", order_by="Profit Margin %", n=10,
-                   where=[{"field":"Financial Year","op":"equals","value":2025,"logical":"AND"}])
+    Before calling, call get_schema and take the subject and field names from it:
+    - subject must be one of the subject names in get_schema.
+    - group_by is the field to rank, a key of the subject's factFieldTypes (for example
+      a store or product field). order_by is the metric to rank by, a key of its
+      metricFieldTypes. Names must match the schema exactly, including case and spaces.
+    - If the result is an error naming a subject or field, correct the name from
+      get_schema. Do not guess other spellings.
+    - n > 0 gives the top n; n < 0 gives the bottom n.
+    - where uses the same format as get_rows_fast.
+
+    Results are in the same format as get_rows_fast, including instance_id and
+    query_results_fast for results larger than the sample.
+
+    Example (the names are illustrative; use the names in get_schema):
+    "Top 10 stores by sales in financial year 2025"
+      -> get_top_n_fast(subject="Sales", group_by="Store", order_by="Sales Value", n=10,
+                        where=[{"field": "Financial Year", "op": "equals", "value": 2025}])
     """
    try:
        if not subject:
@@ -187,13 +196,13 @@ async def get_answer_slow(
     except Exception as exc:
         response = tool_error_response(exc, context="get_answer_slow")
         if ctx:
-            cid = json.loads(response).get("correlation_id", "-")
-            await ctx.error(f"internal error (correlation_id: {cid})")
+            await ctx.error(tool_error_message(response))
         return response
 
 @mcp.tool()
 def get_schema() -> str:
     """
+    Call this before get_rows_fast or get_top_n_fast: their subject and field names must match this schema exactly.
     Get the available schema. Returns a JSON object that defines the available subjects (tables) and their columns.
 
     Returns a JSON string with:

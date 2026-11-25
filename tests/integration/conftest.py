@@ -24,9 +24,9 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import pytest
 from dotenv import dotenv_values
@@ -165,18 +165,17 @@ def remote_server_url(dev_api: DevApiSettings, server_workdir: Path) -> Iterator
                 proc.kill()
 
 
-@pytest.fixture(params=["local-stdio", "remote-http"])
-def mcp_client(
-    request: pytest.FixtureRequest, dev_api: DevApiSettings, server_workdir: Path
+def _make_client(
+    kind: str, settings: DevApiSettings, server_workdir: Path, request: pytest.FixtureRequest
 ) -> Client:
-    """An MCP client (not yet connected) for each server. Use ``async with``."""
-    if request.param == "local-stdio":
+    """An MCP client (not yet connected) for one server, configured from ``settings``."""
+    if kind == "local-stdio":
         env = _clean_env()
         env.update(
-            INMYDATA_API_KEY=dev_api.api_key,
-            INMYDATA_TENANT=dev_api.tenant,
-            INMYDATA_SERVER=dev_api.server,
-            INMYDATA_CALENDAR=dev_api.calendar,
+            INMYDATA_API_KEY=settings.api_key,
+            INMYDATA_TENANT=settings.tenant,
+            INMYDATA_SERVER=settings.server,
+            INMYDATA_CALENDAR=settings.calendar,
             MCP_DUCKDB_LOCATION=str(server_workdir / "duckdb"),
         )
         transport = StdioTransport(
@@ -190,10 +189,35 @@ def mcp_client(
         transport = StreamableHttpTransport(
             url=url,
             headers={
-                "Authorization": f"Bearer {dev_api.api_key}",
-                "x-inmydata-tenant": dev_api.tenant,
-                "x-inmydata-server": dev_api.server,
-                "x-inmydata-calendar": dev_api.calendar,
+                "Authorization": f"Bearer {settings.api_key}",
+                "x-inmydata-tenant": settings.tenant,
+                "x-inmydata-server": settings.server,
+                "x-inmydata-calendar": settings.calendar,
             },
         )
     return Client(transport, timeout=120)
+
+
+@pytest.fixture(params=["local-stdio", "remote-http"])
+def mcp_client_factory(
+    request: pytest.FixtureRequest, dev_api: DevApiSettings, server_workdir: Path
+) -> Callable[..., Client]:
+    """Make MCP clients for each server, optionally with a different API key or calendar.
+
+    Call it as ``mcp_client_factory(api_key="bad")``. Tenant and server cannot be
+    overridden: they decide which host is called, which ``dev_api`` has checked.
+    """
+    def make(*, api_key: str | None = None, calendar: str | None = None) -> Client:
+        settings = replace(
+            dev_api,
+            api_key=dev_api.api_key if api_key is None else api_key,
+            calendar=dev_api.calendar if calendar is None else calendar,
+        )
+        return _make_client(request.param, settings, server_workdir, request)
+    return make
+
+
+@pytest.fixture
+def mcp_client(mcp_client_factory: Callable[..., Client]) -> Client:
+    """An MCP client (not yet connected) for each server. Use ``async with``."""
+    return mcp_client_factory()

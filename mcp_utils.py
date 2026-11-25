@@ -16,7 +16,7 @@ from mcp.server.fastmcp import Context
 import asyncio
 
 from mcp_logging import log_field, logger
-from errors import UserFacingError, tool_error_response
+from errors import UserFacingError, tool_error_message, tool_error_response
 
 
 class InvalidInstanceId(Exception):
@@ -706,8 +706,7 @@ class mcp_utils:
         except Exception as exc:
             response = tool_error_response(exc, context="get_answer")
             if ctx:
-                cid = json.loads(response).get("correlation_id", "-")
-                await ctx.error(f"internal error (correlation_id: {cid})")
+                await ctx.error(tool_error_message(response))
             return response
 
 

@@ -197,7 +197,25 @@ Both sets of settings can remain in `.env.test`; never commit it. Existing unpre
 
 The local site's certificate is trusted by Windows but not by Python's own certificate list. The servers are started through `tests/integration/_launch_server.py`, which uses `truststore` so that Python checks certificates against the Windows store. Certificate checking stays on.
 
-The servers report API failures to the caller only as `internal error` with a correlation ID. The full error is in the remote server's log, under pytest's temporary folder: `%TEMP%\pytest-of-<your user>\pytest-current\mcp-server-cwd0\server_remote.log` on Windows.
+`tests/integration/test_error_reporting.py` checks the error messages for common mistakes (wrong subject, field or calendar name, bad API key). It takes names from `get_schema`, so it does not depend on the dev dataset.
+
+Every tool error includes a correlation ID. The full detail is in the server's log under that ID. For the remote server in these tests, the log is under pytest's temporary folder: `%TEMP%\pytest-of-<your user>\pytest-current\mcp-server-cwd0\server_remote.log` on Windows.
+
+## Error reporting
+
+Tool errors are JSON: `{"error": "<message>", "correlation_id": "<id>"}`. The message depends on the cause (see `errors.py`):
+
+| Cause | Message |
+|---|---|
+| Missing or invalid tool argument | A specific message from the tool, for example `subject parameter is required` (no correlation ID) |
+| inmydata API 400, 404, 409 and other 4xx | `The inmydata API rejected the request (HTTP <status>): <the API's message>`, without the request URL, on one line, at most 300 characters. For `get_rows_fast` / `get_top_n_fast` it adds a hint to call `get_schema`. |
+| inmydata API 401 | Fixed text: the credentials were not accepted |
+| inmydata API 403 | Fixed text: the subject may not exist, may not be enabled for API access, or the user may lack access |
+| inmydata API 5xx | Fixed text, plus the platform's support reference if the response has one. The response body is not passed on. |
+| Cannot connect, or no response in time | Fixed text |
+| Anything else, including a bug in this server or an SQL error in `query_results_fast` | `internal error` |
+
+Only API messages from 4xx responses are passed on, because they describe the caller's own request. Other exception text stays in the log, as required by GHSA-xv3j-j949-g8wx.
 
 ## Deployment
 
