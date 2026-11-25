@@ -50,11 +50,11 @@ AUTH_SERVER = "auth.platform.example.test"
 ISSUER = f"https://{AUTH_SERVER}"
 
 _MANAGED_ENV = (
-    "_API_KEY",
-    "ACME_API_KEY",
-    "RIVAL_API_KEY",
-    "TENANT-A_API_KEY",
-    "TENANT-B_API_KEY",
+    "_API_KEY",
+    "ACME_API_KEY",
+    "RIVAL_API_KEY",
+    "TENANT-A_API_KEY",
+    "TENANT-B_API_KEY",
     "INMYDATA_MCP_HOST",
     "INMYDATA_SERVER",
     "INMYDATA_AUTH_SERVER",
@@ -83,7 +83,6 @@ def _make_fake_utils():
 
     class FakeUtils:
         failure: BaseException | None = None
-        periods_reply: str = json.dumps({"periods": json.dumps({"FinancialYear": 2025, "Month": 3})})
 
         def __init__(self, api_key, tenant, calendar, user, session_id, server):
             self.built_with = {
@@ -120,8 +119,6 @@ def _make_fake_utils():
         async def get_financial_periods(self, target_date):
             if type(self).failure is not None:
                 raise type(self).failure
-            if target_date is None and type(self).periods_reply is not None:
-                return type(self).periods_reply
             return self._echo("get_financial_periods", target_date=target_date)
 
         async def get_calendar_period_date_range(self, financial_year, period_number, period_type):
@@ -1127,39 +1124,6 @@ class TestToolArgumentChecks:
         # Assert
         assert json.loads(reply) == {"error": "context parameter is required"}
 
-    async def test_calendar_range_with_zero_period_number_is_refused(self, legacy_server):
-        # Arrange
-        arguments = {"financial_year": 2025, "period_number": 0, "period_type": "month"}
-
-        # Act
-        async with legacy_server.running() as call:
-            reply = await call("get_calendar_period_date_range", arguments)
-
-        # Assert
-        assert reply.json == {"error": "Could not determine period_number"}
-
-    async def test_calendar_range_with_empty_period_type_is_refused(self, legacy_server):
-        # Arrange
-        arguments = {"financial_year": 2025, "period_number": 3, "period_type": ""}
-
-        # Act
-        async with legacy_server.running() as call:
-            reply = await call("get_calendar_period_date_range", arguments)
-
-        # Assert
-        assert reply.json == {"error": "period_type parameter is required"}
-
-    async def test_calendar_range_with_zero_financial_year_is_refused(self, legacy_server):
-        # Arrange
-        arguments = {"financial_year": 0, "period_number": 3, "period_type": "month"}
-
-        # Act
-        async with legacy_server.running() as call:
-            reply = await call("get_calendar_period_date_range", arguments)
-
-        # Assert
-        assert reply.json == {"error": "Could not determine financial_year"}
-
 
 # ---------------------------------------------------------------------------
 # Tools pass their arguments to the platform layer
@@ -1253,11 +1217,28 @@ class TestToolsDelegateToThePlatformLayer:
         assert reply.json["method"] == "get_financial_periods"
         assert reply.json["args"] == {"target_date": "2025-03-14"}
 
-    async def test_calendar_range_with_every_argument_given_does_not_look_up_periods(
-        self, legacy_server
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            pytest.param(
+                {"financial_year": 2024, "period_number": 7, "period_type": "quarter"},
+                id="all-given",
+            ),
+            pytest.param({}, id="none-given"),
+            pytest.param({"financial_year": 2020, "period_type": "week"}, id="period-number-missing"),
+            pytest.param(
+                {"financial_year": 2025, "period_number": 0, "period_type": ""},
+                id="invalid-values-left-to-mcp_utils",
+            ),
+        ],
+    )
+    async def test_calendar_range_passes_its_arguments_through_unchanged(
+        self, legacy_server, arguments
     ):
-        # Arrange: a periods lookup would return the canned periods reply instead
-        arguments = {"financial_year": 2024, "period_number": 7, "period_type": "quarter"}
+        # Missing arguments are filled from today's financial period inside
+        # mcp_utils (tested in test_mcp_utils_tools.py), so the server must
+        # pass them on unchanged, None included.
+        expected = {"financial_year": None, "period_number": None, "period_type": None, **arguments}
 
         # Act
         async with legacy_server.running() as call:
@@ -1265,103 +1246,7 @@ class TestToolsDelegateToThePlatformLayer:
 
         # Assert
         assert reply.json["method"] == "get_calendar_period_date_range"
-        assert reply.json["args"] == arguments
-
-
-class TestCalendarRangeFillsInMissingArguments:
-    HEADERS = {"x-inmydata-tenant": "acme"}
-
-    @pytest.mark.parametrize(
-        ("periods_reply", "given", "expected"),
-        [
-            pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
-                {},
-                (2025, 3, "month"),
-                id="all-from-periods",
-            ),
-            pytest.param(
-                {"periods": {"FinancialYear": 2025, "Month": 2}},
-                {},
-                (2025, 2, "month"),
-                id="periods-as-object",
-            ),
-            pytest.param(
-                {"periods": json.dumps({"Year": 2024, "Period": 7})},
-                {},
-                (2024, 7, "month"),
-                id="alternative-key-names",
-            ),
-            pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025})},
-                {},
-                (2025, 1, "month"),
-                id="month-defaults-to-one",
-            ),
-            pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
-                {"financial_year": 2020},
-                (2020, 3, "month"),
-                id="given-year-is-kept",
-            ),
-            pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
-                {"period_number": 9},
-                (2025, 9, "month"),
-                id="given-period-is-kept",
-            ),
-            pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
-                {"period_type": "week"},
-                (2025, 3, "week"),
-                id="given-type-is-kept",
-            ),
-        ],
-    )
-    async def test_missing_arguments_are_taken_from_the_current_periods(
-        self, legacy_server, periods_reply, given, expected
-    ):
-        # Arrange
-        legacy_server.utils.periods_reply = json.dumps(periods_reply)
-
-        # Act
-        async with legacy_server.running() as call:
-            reply = await call("get_calendar_period_date_range", given, headers=self.HEADERS)
-
-        # Assert
-        args = reply.json["args"]
-        assert (args["financial_year"], args["period_number"], args["period_type"]) == expected
-
-    async def test_error_from_the_periods_lookup_is_returned_as_it_is(self, legacy_server):
-        # Arrange
-        legacy_server.utils.periods_reply = json.dumps({"error": "calendar not found"})
-
-        # Act
-        async with legacy_server.running() as call:
-            reply = await call("get_calendar_period_date_range", {}, headers=self.HEADERS)
-
-        # Assert
-        assert reply.json == {"error": "calendar not found"}
-
-    @pytest.mark.parametrize(
-        "periods",
-        [
-            pytest.param("this is not json", id="unparseable-text"),
-            pytest.param("{}", id="empty-object"),
-        ],
-    )
-    async def test_unusable_periods_give_a_clear_error_about_the_year(
-        self, legacy_server, periods
-    ):
-        # Arrange
-        legacy_server.utils.periods_reply = json.dumps({"periods": periods})
-
-        # Act
-        async with legacy_server.running() as call:
-            reply = await call("get_calendar_period_date_range", {}, headers=self.HEADERS)
-
-        # Assert
-        assert reply.json == {"error": "Could not determine financial_year"}
+        assert reply.json["args"] == expected
 
 
 # ---------------------------------------------------------------------------

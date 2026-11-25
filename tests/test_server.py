@@ -495,143 +495,24 @@ async def test_get_financial_periods_hides_unexpected_error_detail(server, monke
 
 # --- get_calendar_period_date_range ---------------------------------------
 
-def _periods(**values) -> str:
-    """The shape the data layer returns: periods as a JSON string inside JSON."""
-    return json.dumps({"periods": json.dumps(values)})
+# Missing arguments are filled from today's financial period inside
+# mcp_utils (tested in test_mcp_utils_tools.py), so the server must pass them
+# on unchanged, None included.
 
-
-async def test_date_range_with_all_arguments_does_not_look_up_current_periods(server, monkeypatch):
+@pytest.mark.parametrize("args, expected", [
+    pytest.param((2025, 3, "quarter"), (2025, 3, "quarter"), id="all-given"),
+    pytest.param((), (None, None, None), id="none-given"),
+    pytest.param((2020, None, "week"), (2020, None, "week"), id="period-number-missing"),
+    pytest.param((None, 3, None), (None, 3, None), id="only-period-number-given"),
+    pytest.param((2025, 0, ""), (2025, 0, ""), id="invalid-values-left-to-mcp_utils"),
+])
+async def test_date_range_passes_the_arguments_through_unchanged(server, monkeypatch, args, expected):
     fake = _use(server, monkeypatch, get_calendar_period_date_range='{"start_date": "a"}')
 
-    result = await server.get_calendar_period_date_range(2025, 3, "quarter")
+    result = await server.get_calendar_period_date_range(*args)
 
     assert result == '{"start_date": "a"}'
-    assert fake.last_call("get_calendar_period_date_range") == (2025, 3, "quarter")
-    assert [c[0] for c in fake.calls] == ["get_calendar_period_date_range"]
-
-
-async def test_date_range_with_no_arguments_uses_the_current_financial_year_and_month(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025, Month=7),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range()
-
-    assert fake.last_call("get_calendar_period_date_range") == (2025, 7, "month")
-
-
-async def test_date_range_fills_only_the_missing_arguments(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025, Month=7),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range(financial_year=2020, period_type="week")
-
-    assert fake.last_call("get_calendar_period_date_range") == (2020, 7, "week")
-
-
-async def test_date_range_with_only_the_period_number_given_fills_year_and_type(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025, Month=7),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range(period_number=3)
-
-    assert fake.last_call("get_calendar_period_date_range") == (2025, 3, "month")
-
-
-async def test_date_range_accepts_alternative_period_key_names(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=_periods(Year=2024, Period=4),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range()
-
-    assert fake.last_call("get_calendar_period_date_range") == (2024, 4, "month")
-
-
-async def test_date_range_accepts_periods_that_are_already_a_json_object(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=json.dumps({"periods": {"FinancialYear": 2023, "Month": 2}}),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range()
-
-    assert fake.last_call("get_calendar_period_date_range") == (2023, 2, "month")
-
-
-async def test_date_range_defaults_the_period_number_to_one_when_the_periods_lack_it(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range()
-
-    assert fake.last_call("get_calendar_period_date_range") == (2025, 1, "month")
-
-
-async def test_date_range_returns_the_lookup_error_when_current_periods_cannot_be_fetched(server, monkeypatch):
-    fake = _use(server, monkeypatch, get_financial_periods='{"error": "calendar not found"}')
-
-    result = await server.get_calendar_period_date_range()
-
-    assert json.loads(result) == {"error": "calendar not found"}
-    assert [c[0] for c in fake.calls] == ["get_financial_periods"]
-
-
-async def test_date_range_reports_when_the_financial_year_cannot_be_determined(server, monkeypatch):
-    _use(server, monkeypatch, get_financial_periods=_periods())
-
-    result = await server.get_calendar_period_date_range()
-
-    assert json.loads(result) == {"error": "Could not determine financial_year"}
-
-
-async def test_date_range_reports_when_the_periods_text_is_not_valid_json(server, monkeypatch):
-    _use(server, monkeypatch, get_financial_periods=json.dumps({"periods": "not json"}))
-
-    result = await server.get_calendar_period_date_range()
-
-    assert json.loads(result) == {"error": "Could not determine financial_year"}
-
-
-async def test_date_range_reports_when_the_period_number_is_zero(server, monkeypatch):
-    fake = _use(server, monkeypatch)
-
-    result = await server.get_calendar_period_date_range(2025, 0, "month")
-
-    assert json.loads(result) == {"error": "Could not determine period_number"}
-    assert fake.calls == []
-
-
-async def test_date_range_reports_when_the_financial_year_is_zero(server, monkeypatch):
-    fake = _use(server, monkeypatch)
-
-    result = await server.get_calendar_period_date_range(0, 1, "month")
-
-    assert json.loads(result) == {"error": "Could not determine financial_year"}
-    assert fake.calls == []
-
-
-async def test_date_range_rejects_a_blank_period_type(server, monkeypatch):
-    fake = _use(server, monkeypatch)
-
-    result = await server.get_calendar_period_date_range(2025, 1, "")
-
-    assert json.loads(result) == {"error": "period_type parameter is required"}
-    assert fake.calls == []
+    assert fake.calls == [("get_calendar_period_date_range", *expected)]
 
 
 async def test_date_range_reports_a_user_facing_error_verbatim(server, monkeypatch):
@@ -649,10 +530,3 @@ async def test_date_range_hides_unexpected_error_detail(server, monkeypatch):
 
     _assert_sanitised_error(result, "secret_col")
 
-
-async def test_date_range_hides_detail_when_the_current_periods_lookup_crashes(server, monkeypatch):
-    _use(server, monkeypatch, get_financial_periods=RuntimeError("upstream exploded"))
-
-    result = await server.get_calendar_period_date_range()
-
-    _assert_sanitised_error(result, "upstream exploded")

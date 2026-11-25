@@ -79,6 +79,12 @@ def _create_instance(duckdb_dir, sql="CREATE TABLE my_table AS SELECT * FROM ran
     return instance_id
 
 
+NOT_FOUND = (
+    "No saved result was found for this instance_id. Run get_rows_fast or "
+    "get_top_n_fast again to get a new one."
+)
+
+
 class FakeContext:
     """Records progress reports and errors the way an MCP Context would receive them."""
 
@@ -281,7 +287,7 @@ class TestQueryResults:
         result = json.loads(await utils_instance.query_results(str(uuid.uuid4()), "SELECT 1"))
 
         # Assert
-        assert result["error"] == "instance not found"
+        assert result["error"] == NOT_FOUND
         assert result["correlation_id"]
 
     async def test_does_not_find_an_instance_that_belongs_to_another_tenant(self, duckdb_dir):
@@ -295,21 +301,73 @@ class TestQueryResults:
         # Act
         result = json.loads(await other.query_results(instance_id, "SELECT * FROM my_table"))
 
-        # Assert
-        assert result["error"] == "instance not found"
+        # Assert: the same message as for an id that does not exist, so the
+        # reply does not reveal that the instance exists for another tenant.
+        assert result["error"] == NOT_FOUND
 
-    async def test_hides_database_error_details_from_the_caller(self, utils_instance, duckdb_dir):
+    @pytest.mark.parametrize("sql", [
+        pytest.param("SELECT * FROM no_such_table", id="unknown-table"),
+        pytest.param('SELECT SUM("no_such_column") FROM my_table', id="unknown-column"),
+        pytest.param("SELEC a FROM my_table", id="syntax-error"),
+        pytest.param("SELECT CAST('x' AS INTEGER) FROM my_table", id="bad-conversion"),
+    ])
+    async def test_sql_mistake_lists_the_columns_but_not_duckdbs_message(self, utils_instance, duckdb_dir, sql):
         # Arrange
-        instance_id = _create_instance(duckdb_dir)
+        instance_id = _create_instance(
+            duckdb_dir, 'CREATE TABLE my_table AS SELECT 1 AS "Store", 2.5 AS "Sales Value"',
+        )
 
         # Act
-        raw = await utils_instance.query_results(instance_id, "SELECT * FROM no_such_table")
+        raw = await utils_instance.query_results(instance_id, sql)
         result = json.loads(raw)
 
         # Assert
-        assert result["error"] == "internal error"
+        assert result["error"] == (
+            "The SQL could not be run against my_table. Check that it is valid DuckDB SQL "
+            'and uses only these columns, in double quotes: "Store", "Sales Value".'
+        )
         assert result["correlation_id"]
-        assert "no_such_table" not in raw
+        for duckdb_text in ("no_such", "Binder", "Parser", "Catalog", "Conversion", "SELEC "):
+            assert duckdb_text not in raw
+
+    async def test_sql_mistake_after_my_table_was_dropped(self, utils_instance, duckdb_dir):
+        # Arrange
+        instance_id = _create_instance(duckdb_dir)
+        await utils_instance.query_results(instance_id, "DROP TABLE my_table")
+
+        # Act
+        result = json.loads(await utils_instance.query_results(instance_id, "SELECT * FROM my_table"))
+
+        # Assert
+        assert result["error"].startswith("The SQL could not be run, and this result no longer contains my_table.")
+
+    async def test_long_column_lists_are_cut_short(self, utils_instance, duckdb_dir):
+        # Arrange
+        columns = ", ".join(f'{i} AS "c{i}"' for i in range(80))
+        instance_id = _create_instance(duckdb_dir, f"CREATE TABLE my_table AS SELECT {columns}")
+
+        # Act
+        result = json.loads(await utils_instance.query_results(instance_id, "SELECT nope FROM my_table"))
+
+        # Assert
+        assert '"c59", ...' in result["error"]
+        assert '"c60"' not in result["error"]
+
+    async def test_duckdb_engine_failure_is_still_an_internal_error(self, utils_instance, duckdb_dir, monkeypatch):
+        # Arrange: an I/O failure is not the caller's mistake
+        instance_id = _create_instance(duckdb_dir)
+        import mcp_utils as mcp_utils_module
+
+        def broken_connection(path, read_only=False):
+            raise duckdb.IOException("Could not set lock on file C:/secret/path.duckdb")
+        monkeypatch.setattr(mcp_utils_module, "_open_sandboxed_connection", broken_connection)
+
+        # Act
+        raw = await utils_instance.query_results(instance_id, "SELECT * FROM my_table")
+
+        # Assert
+        assert json.loads(raw)["error"] == "internal error"
+        assert "secret" not in raw
 
     async def test_blocks_file_access_from_inside_a_valid_query(self, utils_instance, duckdb_dir, tmp_path):
         # Arrange
@@ -688,7 +746,7 @@ class TestGetFinancialPeriods:
 
     async def test_returns_the_periods_for_the_requested_date(self, utils_instance, monkeypatch):
         # Arrange
-        periods = {"Year": 2024, "Month": 3, "Week": 10, "Quarter": 1}
+        periods = {"year": 2024, "month": 3, "week": 10, "quarter": 1}
         _install_calendar_assistant(monkeypatch, periods=periods)
 
         # Act
@@ -698,9 +756,21 @@ class TestGetFinancialPeriods:
         assert result["date"] == "2024-03-05"
         assert json.loads(result["periods"]) == periods
 
+    async def test_converts_the_sdk_period_object_to_json(self, utils_instance, monkeypatch):
+        # Arrange
+        _install_calendar_assistant(
+            monkeypatch, periods=FinancialPeriodDetails(year=2025, month=6, week=24, quarter=2),
+        )
+
+        # Act
+        result = json.loads(await utils_instance.get_financial_periods("2025-06-15"))
+
+        # Assert
+        assert json.loads(result["periods"]) == {"year": 2025, "month": 6, "week": 24, "quarter": 2}
+
     async def test_uses_todays_date_when_none_is_given(self, utils_instance, monkeypatch):
         # Arrange
-        _install_calendar_assistant(monkeypatch, periods={"Year": 2024})
+        _install_calendar_assistant(monkeypatch, periods={"year": 2024})
         before = date.today()
 
         # Act
@@ -723,16 +793,18 @@ class TestGetFinancialPeriods:
         assert "2024" in result["periods"]
         assert result["date"] == "2024-03-05"
 
-    async def test_hides_error_details_for_a_malformed_date(self, utils_instance, monkeypatch):
+    @pytest.mark.parametrize("bad_date", ["not-a-date", "15/06/2025", "2025-13-45"])
+    async def test_explains_the_date_format_for_a_malformed_date(self, utils_instance, monkeypatch, bad_date):
         # Arrange
         _install_calendar_assistant(monkeypatch, periods={})
 
         # Act
-        result = json.loads(await utils_instance.get_financial_periods("not-a-date"))
+        raw = await utils_instance.get_financial_periods(bad_date)
 
         # Assert
-        assert result["error"] == "internal error"
-        assert result["correlation_id"]
+        assert json.loads(raw) == {
+            "error": "target_date must be a date in YYYY-MM-DD format, for example 2025-06-15."
+        }
 
     async def test_hides_upstream_error_details_from_the_caller(self, utils_instance, monkeypatch):
         # Arrange
@@ -787,7 +859,7 @@ class TestGetCalendarPeriodDateRangeExplicit:
 
         # Assert
         assert result["start_date"] == "2024-01-01"
-        assert result["period_type"] == period_type
+        assert result["period_type"] == period_type.lower()
 
     async def test_rejects_an_unknown_period_type(self, utils_instance, monkeypatch):
         # Arrange
@@ -872,7 +944,7 @@ class TestGetCalendarPeriodDateRangeExplicit:
 # get_calendar_period_date_range: defaults taken from the current period
 # ---------------------------------------------------------------------------
 
-CURRENT_PERIODS = {"FinancialYear": 2025, "Month": 3, "Quarter": 1, "Week": 10}
+CURRENT_PERIODS = {"year": 2025, "month": 3, "quarter": 1, "week": 10}
 
 
 class TestGetCalendarPeriodDateRangeDefaults:
@@ -893,6 +965,7 @@ class TestGetCalendarPeriodDateRangeDefaults:
         pytest.param("week", 10, id="week"),
         pytest.param("year", 1, id="year"),
         pytest.param("month", 3, id="month"),
+        pytest.param("Quarter", 1, id="mixed-case-quarter"),
     ])
     async def test_uses_the_current_period_number_for_the_requested_type(
         self, utils_instance, monkeypatch, period_type, expected_number,
@@ -966,16 +1039,6 @@ class TestGetCalendarPeriodDateRangeDefaults:
         # Assert
         assert result == {"error": "Could not determine financial_year"}
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Suspected bug: the real CalendarAssistant returns a FinancialPeriodDetails object "
-            "(attributes year/month/week/quarter). get_financial_periods cannot serialise it, so "
-            "it falls back to str(), which get_calendar_period_date_range then fails to parse and "
-            "treats as {}. It also looks up 'FinancialYear'/'Month' keys that the object never "
-            "has. Calling with no arguments therefore always says it cannot determine the year."
-        ),
-    )
     async def test_defaults_to_the_current_month_with_the_real_period_object(self, utils_instance, monkeypatch):
         # Arrange
         _install_calendar_assistant(

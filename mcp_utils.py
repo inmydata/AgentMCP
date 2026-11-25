@@ -16,7 +16,7 @@ from mcp.server.fastmcp import Context
 import asyncio
 
 from mcp_logging import log_field, logger
-from errors import UserFacingError, tool_error_response
+from errors import UserFacingError, tool_error_message, tool_error_response
 
 
 class InvalidInstanceId(Exception):
@@ -164,6 +164,39 @@ def _assert_sql_safe(sql: str) -> None:
         first = m.group(0).upper()
         if first in _BLOCKED_LEAD_KEYWORDS:
             raise UnsafeSql(f"statement starts with disallowed keyword: {first}")
+
+
+_MAX_COLUMNS_LISTED = 60
+
+
+def _sql_error_message(db_path: Path) -> str:
+    """Caller-facing message for SQL that DuckDB rejected, listing my_table's columns.
+
+    Built only from fixed text and the column names of the caller's own result
+    table, never from DuckDB's error text.
+    """
+    base = "The SQL could not be run against my_table. Check that it is valid DuckDB SQL"
+    try:
+        con = _open_sandboxed_connection(db_path, read_only=True)
+        try:
+            columns = [row[0] for row in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'my_table' ORDER BY ordinal_position"
+            ).fetchall()]
+        finally:
+            con.close()
+    except Exception:
+        logger.warning("query_results could not read my_table's columns from %s", db_path, exc_info=True)
+        return base + "."
+    if not columns:
+        return (
+            "The SQL could not be run, and this result no longer contains my_table. "
+            "Run get_rows_fast or get_top_n_fast again to get a new result."
+        )
+    names = ", ".join('"' + str(c).replace('"', '""') + '"' for c in columns[:_MAX_COLUMNS_LISTED])
+    if len(columns) > _MAX_COLUMNS_LISTED:
+        names += ", ..."
+    return f"{base} and uses only these columns, in double quotes: {names}."
 
 
 class mcp_utils:
@@ -579,6 +612,10 @@ class mcp_utils:
         call my_table in it.
         """
         correlation_id = uuid.uuid4().hex[:8]
+
+        def error(message: str) -> str:
+            return json.dumps({"error": message, "correlation_id": correlation_id})
+
         try:
             validated_id = _validate_instance_id(instance_id)
             db_path = _resolve_duckdb_path(self.tenant, validated_id)
@@ -588,14 +625,19 @@ class mcp_utils:
                 "query_results rejected [%s]: %s (instance_id=%r)",
                 correlation_id, e, instance_id,
             )
-            return json.dumps({"error": "invalid request", "correlation_id": correlation_id})
+            # Deliberately generic (fb17d7e): the caller is not told which
+            # check refused the request.
+            return error("invalid request")
 
         if not db_path.exists():
             logger.warning(
                 "query_results instance not found [%s] (instance_id=%s)",
                 correlation_id, validated_id,
             )
-            return json.dumps({"error": "instance not found", "correlation_id": correlation_id})
+            return error(
+                "No saved result was found for this instance_id. Run get_rows_fast or "
+                "get_top_n_fast again to get a new one."
+            )
 
         logger.info(
             "query_results called [%s] (instance_id=%s, sql_chars=%d)",
@@ -624,9 +666,19 @@ class mcp_utils:
                 "data": records,
                 "instance_id": validated_id,
             }, ensure_ascii=False)
+        except (duckdb.ProgrammingError, duckdb.DataError) as e:
+            # A mistake in the caller's SQL (syntax, unknown column or table,
+            # impossible conversion). DuckDB's text stays in the log; the caller
+            # gets a fixed message plus my_table's columns, which it already
+            # saw in the get_rows_fast / get_top_n_fast response.
+            logger.warning(
+                "query_results SQL rejected by DuckDB [%s] (instance_id=%s): %s",
+                correlation_id, validated_id, e,
+            )
+            return error(_sql_error_message(db_path))
         except Exception:
             logger.exception("query_results failed [%s] for instance_id=%s", correlation_id, validated_id)
-            return json.dumps({"error": "internal error", "correlation_id": correlation_id})
+            return error("internal error")
 
     async def get_answer(
         self,
@@ -706,8 +758,7 @@ class mcp_utils:
         except Exception as exc:
             response = tool_error_response(exc, context="get_answer")
             if ctx:
-                cid = json.loads(response).get("correlation_id", "-")
-                await ctx.error(f"internal error (correlation_id: {cid})")
+                await ctx.error(tool_error_message(response))
             return response
 
 
@@ -913,19 +964,29 @@ class mcp_utils:
             assistant = CalendarAssistant(self.tenant, self.calendar, self.server, self.api_key)
 
             if target_date:
-                dt = datetime.fromisoformat(target_date).date()
+                try:
+                    dt = datetime.fromisoformat(target_date).date()
+                except (TypeError, ValueError):
+                    raise UserFacingError(
+                        "target_date must be a date in YYYY-MM-DD format, for example 2025-06-15."
+                    ) from None
             else:
                 dt = date.today()
 
             periods = assistant.get_financial_periods(dt)
 
-            # Convert SDK/domain objects to JSON-serializable primitives
-            try:
-                serializable = json.dumps(periods)
-            except Exception:
-                serializable = str(periods)
+            # The SDK returns a FinancialPeriodDetails object, which json.dumps
+            # cannot encode. Copy its fields into a dict; get_calendar_period_date_range
+            # (here and in both servers) reads these same keys for its defaults.
+            if not isinstance(periods, dict):
+                periods = {
+                    "year": periods.year,
+                    "month": periods.month,
+                    "week": periods.week,
+                    "quarter": periods.quarter,
+                }
 
-            return json.dumps({"periods": serializable, "date": dt.isoformat()})
+            return json.dumps({"periods": json.dumps(periods), "date": dt.isoformat()})
 
         except UserFacingError as exc:
             return json.dumps({"error": str(exc)})
@@ -960,6 +1021,9 @@ class mcp_utils:
             if not self.tenant or not self.calendar:
                 return json.dumps({"error": "Tenant and Calendar variables must be set"})
 
+            if period_type is not None:
+                period_type = period_type.lower()
+
             # If any parameter is missing, use current financial period
             if financial_year is None or period_number is None or period_type is None:
                 # Get current date's financial period info
@@ -978,7 +1042,7 @@ class mcp_utils:
                 
                 # Set defaults based on current periods
                 if financial_year is None:
-                    financial_year = periods.get("FinancialYear", periods.get("Year", 0))
+                    financial_year = periods.get("year", 0)
                 
                 if period_type is None:
                     period_type = "month"  # Default to month
@@ -986,11 +1050,11 @@ class mcp_utils:
                 if period_number is None:
                     # Use current period number based on period_type
                     if period_type == "month":
-                        period_number = periods.get("Month", periods.get("Period", 1))
+                        period_number = periods.get("month", 1)
                     elif period_type == "quarter":
-                        period_number = periods.get("Quarter", 1)
+                        period_number = periods.get("quarter", 1)
                     elif period_type == "week":
-                        period_number = periods.get("Week", 1)
+                        period_number = periods.get("week", 1)
                     elif period_type == "year":
                         period_number = 1  # Year period number is typically 1
                     else:

@@ -176,6 +176,50 @@ The cache file contains plaintext tenant API keys so the server does not burn on
 
 If the file is deleted or a new replica starts without access to it, the first call per tenant re-mints a key. Over time that can exhaust the 20-key limit; on exhaustion the tool returns an operator-actionable error and an admin must revoke stale keys via the admin API.
 
+## Testing
+
+```bash
+uv sync --extra test
+uv run pytest
+```
+
+This runs the unit tests, which replace the inmydata API with fakes.
+
+### Live integration tests
+
+`tests/integration/` calls the API through both MCP servers: `server.py` over stdio, and `server_remote.py` over streamable HTTP. The tests are skipped unless you pass `--integration`. Copy `.env.test.example` to `.env.test` (git-ignored) and configure the separate local and test settings and API keys:
+
+- **Local (default):** Set `LOCAL_INMYDATA_API_KEY` to a key for the dev tenant. Start the local API and add `127.0.0.1 dev.inmydata.com` to your hosts file. The tests refuse to run if any resolved address is not loopback.
+  Run `uv run pytest --integration -m integration`.
+- **Test server:** Set `TEST_INMYDATA_API_KEY` to a key for the test tenant. Run `uv run pytest --integration -m integration --integration-target=test`. Test mode only accepts `test.test-inmydata.com` and refuses loopback addresses.
+
+Both sets of settings can remain in `.env.test`; never commit it. Existing unprefixed `INMYDATA_*` settings still work for local mode if no `LOCAL_INMYDATA_*` settings are present. Both modes use the same fixed dev dataset and calendar assertions. If the test server has different data, those assertions may fail.
+
+The local site's certificate is trusted by Windows but not by Python's own certificate list. The servers are started through `tests/integration/_launch_server.py`, which uses `truststore` so that Python checks certificates against the Windows store. Certificate checking stays on.
+
+`tests/integration/test_error_reporting.py` checks the exact error messages for common mistakes (wrong subject, field or calendar name, bad API key, badly formed date, SQL mistakes). Like the data tests, it uses the `Inmystore Sales` subject, which both the local dev tenant and the test tenant have.
+
+Every tool error includes a correlation ID. The full detail is in the server's log under that ID. For the remote server in these tests, the log is under pytest's temporary folder: `%TEMP%\pytest-of-<your user>\pytest-current\mcp-server-cwd0\server_remote.log` on Windows.
+
+## Error reporting
+
+Tool errors are JSON: `{"error": "<message>", "correlation_id": "<id>"}`. The message depends on the cause (see `errors.py`):
+
+| Cause | Message |
+|---|---|
+| Missing or invalid tool argument | A specific message from the tool, for example `subject parameter is required` (no correlation ID) |
+| inmydata API 400, 404, 409 and other 4xx | `The inmydata API rejected the request (HTTP <status>): <the API's message>`, without the request URL, on one line, at most 300 characters. For `get_rows_fast` / `get_top_n_fast` it adds a hint to call `get_schema`. |
+| inmydata API 401 | Fixed text: the credentials were not accepted |
+| inmydata API 403 | Fixed text: the subject may not exist, may not be enabled for API access, or the user may lack access |
+| inmydata API 5xx | Fixed text, plus the platform's support reference if the response has one. The response body is not passed on. |
+| Cannot connect, or no response in time | Fixed text |
+| `query_results_fast`: mistake in the caller's SQL (syntax, unknown column or table, bad conversion) | Fixed text plus the column names of `my_table`, which the caller already has. DuckDB's own message stays in the log. |
+| `query_results_fast`: malformed `instance_id` or blocked SQL statement (`ATTACH`, `COPY`, ...) | `invalid request`. Deliberately does not say which check refused it. |
+| `query_results_fast`: `instance_id` not found, or belongs to another tenant | Fixed text saying to run `get_rows_fast` / `get_top_n_fast` again. The same in both cases. |
+| Anything else, including a bug in this server or a DuckDB engine failure | `internal error` |
+
+Only API messages from 4xx responses are passed on, because they describe the caller's own request. Other exception text stays in the log, as required by GHSA-xv3j-j949-g8wx.
+
 ## Deployment
 
 ### Docker Deployment
