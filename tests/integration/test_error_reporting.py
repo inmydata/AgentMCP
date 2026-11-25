@@ -111,18 +111,35 @@ async def test_badly_formed_date_explains_the_format(mcp_client: Client) -> None
     }
 
 
-async def test_sql_mistake_lists_the_result_columns(mcp_client: Client) -> None:
-    async with mcp_client as client:
-        schema = json.loads((await client.call_tool("get_schema", {})).content[0].text)
-        subject = schema["subjects"][0]
-        # Several dimensions together give enough combinations for more rows
-        # than the inline sample, so the result is saved for query_results_fast.
+MAX_SUBJECTS_TRIED = 5
+
+
+async def saved_result(client: Client) -> dict | None:
+    """A get_rows_fast result large enough to be saved for query_results_fast, or None.
+
+    Tries the first few subjects in the schema, selecting each one's first
+    three dimensions: together they give enough combinations for more rows
+    than the inline sample. Subjects that return an error (for example one
+    not enabled for the API) are passed over.
+    """
+    schema = json.loads((await client.call_tool("get_schema", {})).content[0].text)
+    for subject in schema["subjects"][:MAX_SUBJECTS_TRIED]:
         fields = list(subject["factFieldTypes"])[:3]
+        if not fields:
+            continue
         rows = json.loads((await client.call_tool(
             "get_rows_fast", {"subject": subject["name"], "select": fields},
         )).content[0].text)
-        if not rows.get("instance_id"):
-            pytest.skip(f"{subject['name']} / {fields} returned too few rows to be saved")
+        if rows.get("instance_id"):
+            return rows
+    return None
+
+
+async def test_sql_mistake_lists_the_result_columns(mcp_client: Client) -> None:
+    async with mcp_client as client:
+        rows = await saved_result(client)
+        if rows is None:
+            pytest.skip(f"none of the first {MAX_SUBJECTS_TRIED} subjects returned enough rows to be saved")
         payload = await call_error(client, "query_results_fast", {
             "instance_id": rows["instance_id"], "sql": 'SELECT SUM("No Such Column") FROM my_table',
         })
