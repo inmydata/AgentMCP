@@ -166,6 +166,39 @@ def _assert_sql_safe(sql: str) -> None:
             raise UnsafeSql(f"statement starts with disallowed keyword: {first}")
 
 
+_MAX_COLUMNS_LISTED = 60
+
+
+def _sql_error_message(db_path: Path) -> str:
+    """Caller-facing message for SQL that DuckDB rejected, listing my_table's columns.
+
+    Built only from fixed text and the column names of the caller's own result
+    table, never from DuckDB's error text.
+    """
+    base = "The SQL could not be run against my_table. Check that it is valid DuckDB SQL"
+    try:
+        con = _open_sandboxed_connection(db_path, read_only=True)
+        try:
+            columns = [row[0] for row in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'my_table' ORDER BY ordinal_position"
+            ).fetchall()]
+        finally:
+            con.close()
+    except Exception:
+        logger.warning("query_results could not read my_table's columns from %s", db_path, exc_info=True)
+        return base + "."
+    if not columns:
+        return (
+            "The SQL could not be run, and this result no longer contains my_table. "
+            "Run get_rows_fast or get_top_n_fast again to get a new result."
+        )
+    names = ", ".join('"' + str(c).replace('"', '""') + '"' for c in columns[:_MAX_COLUMNS_LISTED])
+    if len(columns) > _MAX_COLUMNS_LISTED:
+        names += ", ..."
+    return f"{base} and uses only these columns, in double quotes: {names}."
+
+
 class mcp_utils:
     def __init__(
             self, 
@@ -579,6 +612,10 @@ class mcp_utils:
         call my_table in it.
         """
         correlation_id = uuid.uuid4().hex[:8]
+
+        def error(message: str) -> str:
+            return json.dumps({"error": message, "correlation_id": correlation_id})
+
         try:
             validated_id = _validate_instance_id(instance_id)
             db_path = _resolve_duckdb_path(self.tenant, validated_id)
@@ -588,14 +625,19 @@ class mcp_utils:
                 "query_results rejected [%s]: %s (instance_id=%r)",
                 correlation_id, e, instance_id,
             )
-            return json.dumps({"error": "invalid request", "correlation_id": correlation_id})
+            # Deliberately generic (fb17d7e): the caller is not told which
+            # check refused the request.
+            return error("invalid request")
 
         if not db_path.exists():
             logger.warning(
                 "query_results instance not found [%s] (instance_id=%s)",
                 correlation_id, validated_id,
             )
-            return json.dumps({"error": "instance not found", "correlation_id": correlation_id})
+            return error(
+                "No saved result was found for this instance_id. Run get_rows_fast or "
+                "get_top_n_fast again to get a new one."
+            )
 
         logger.info(
             "query_results called [%s] (instance_id=%s, sql_chars=%d)",
@@ -624,9 +666,19 @@ class mcp_utils:
                 "data": records,
                 "instance_id": validated_id,
             }, ensure_ascii=False)
+        except (duckdb.ProgrammingError, duckdb.DataError) as e:
+            # A mistake in the caller's SQL (syntax, unknown column or table,
+            # impossible conversion). DuckDB's text stays in the log; the caller
+            # gets a fixed message plus my_table's columns, which it already
+            # saw in the get_rows_fast / get_top_n_fast response.
+            logger.warning(
+                "query_results SQL rejected by DuckDB [%s] (instance_id=%s): %s",
+                correlation_id, validated_id, e,
+            )
+            return error(_sql_error_message(db_path))
         except Exception:
             logger.exception("query_results failed [%s] for instance_id=%s", correlation_id, validated_id)
-            return json.dumps({"error": "internal error", "correlation_id": correlation_id})
+            return error("internal error")
 
     async def get_answer(
         self,
@@ -912,7 +964,12 @@ class mcp_utils:
             assistant = CalendarAssistant(self.tenant, self.calendar, self.server, self.api_key)
 
             if target_date:
-                dt = datetime.fromisoformat(target_date).date()
+                try:
+                    dt = datetime.fromisoformat(target_date).date()
+                except (TypeError, ValueError):
+                    raise UserFacingError(
+                        "target_date must be a date in YYYY-MM-DD format, for example 2025-06-15."
+                    ) from None
             else:
                 dt = date.today()
 

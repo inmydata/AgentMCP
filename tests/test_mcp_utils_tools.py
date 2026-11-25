@@ -79,6 +79,12 @@ def _create_instance(duckdb_dir, sql="CREATE TABLE my_table AS SELECT * FROM ran
     return instance_id
 
 
+NOT_FOUND = (
+    "No saved result was found for this instance_id. Run get_rows_fast or "
+    "get_top_n_fast again to get a new one."
+)
+
+
 class FakeContext:
     """Records progress reports and errors the way an MCP Context would receive them."""
 
@@ -281,7 +287,7 @@ class TestQueryResults:
         result = json.loads(await utils_instance.query_results(str(uuid.uuid4()), "SELECT 1"))
 
         # Assert
-        assert result["error"] == "instance not found"
+        assert result["error"] == NOT_FOUND
         assert result["correlation_id"]
 
     async def test_does_not_find_an_instance_that_belongs_to_another_tenant(self, duckdb_dir):
@@ -295,21 +301,73 @@ class TestQueryResults:
         # Act
         result = json.loads(await other.query_results(instance_id, "SELECT * FROM my_table"))
 
-        # Assert
-        assert result["error"] == "instance not found"
+        # Assert: the same message as for an id that does not exist, so the
+        # reply does not reveal that the instance exists for another tenant.
+        assert result["error"] == NOT_FOUND
 
-    async def test_hides_database_error_details_from_the_caller(self, utils_instance, duckdb_dir):
+    @pytest.mark.parametrize("sql", [
+        pytest.param("SELECT * FROM no_such_table", id="unknown-table"),
+        pytest.param('SELECT SUM("no_such_column") FROM my_table', id="unknown-column"),
+        pytest.param("SELEC a FROM my_table", id="syntax-error"),
+        pytest.param("SELECT CAST('x' AS INTEGER) FROM my_table", id="bad-conversion"),
+    ])
+    async def test_sql_mistake_lists_the_columns_but_not_duckdbs_message(self, utils_instance, duckdb_dir, sql):
         # Arrange
-        instance_id = _create_instance(duckdb_dir)
+        instance_id = _create_instance(
+            duckdb_dir, 'CREATE TABLE my_table AS SELECT 1 AS "Store", 2.5 AS "Sales Value"',
+        )
 
         # Act
-        raw = await utils_instance.query_results(instance_id, "SELECT * FROM no_such_table")
+        raw = await utils_instance.query_results(instance_id, sql)
         result = json.loads(raw)
 
         # Assert
-        assert result["error"] == "internal error"
+        assert result["error"] == (
+            "The SQL could not be run against my_table. Check that it is valid DuckDB SQL "
+            'and uses only these columns, in double quotes: "Store", "Sales Value".'
+        )
         assert result["correlation_id"]
-        assert "no_such_table" not in raw
+        for duckdb_text in ("no_such", "Binder", "Parser", "Catalog", "Conversion", "SELEC "):
+            assert duckdb_text not in raw
+
+    async def test_sql_mistake_after_my_table_was_dropped(self, utils_instance, duckdb_dir):
+        # Arrange
+        instance_id = _create_instance(duckdb_dir)
+        await utils_instance.query_results(instance_id, "DROP TABLE my_table")
+
+        # Act
+        result = json.loads(await utils_instance.query_results(instance_id, "SELECT * FROM my_table"))
+
+        # Assert
+        assert result["error"].startswith("The SQL could not be run, and this result no longer contains my_table.")
+
+    async def test_long_column_lists_are_cut_short(self, utils_instance, duckdb_dir):
+        # Arrange
+        columns = ", ".join(f'{i} AS "c{i}"' for i in range(80))
+        instance_id = _create_instance(duckdb_dir, f"CREATE TABLE my_table AS SELECT {columns}")
+
+        # Act
+        result = json.loads(await utils_instance.query_results(instance_id, "SELECT nope FROM my_table"))
+
+        # Assert
+        assert '"c59", ...' in result["error"]
+        assert '"c60"' not in result["error"]
+
+    async def test_duckdb_engine_failure_is_still_an_internal_error(self, utils_instance, duckdb_dir, monkeypatch):
+        # Arrange: an I/O failure is not the caller's mistake
+        instance_id = _create_instance(duckdb_dir)
+        import mcp_utils as mcp_utils_module
+
+        def broken_connection(path, read_only=False):
+            raise duckdb.IOException("Could not set lock on file C:/secret/path.duckdb")
+        monkeypatch.setattr(mcp_utils_module, "_open_sandboxed_connection", broken_connection)
+
+        # Act
+        raw = await utils_instance.query_results(instance_id, "SELECT * FROM my_table")
+
+        # Assert
+        assert json.loads(raw)["error"] == "internal error"
+        assert "secret" not in raw
 
     async def test_blocks_file_access_from_inside_a_valid_query(self, utils_instance, duckdb_dir, tmp_path):
         # Arrange
@@ -735,16 +793,18 @@ class TestGetFinancialPeriods:
         assert "2024" in result["periods"]
         assert result["date"] == "2024-03-05"
 
-    async def test_hides_error_details_for_a_malformed_date(self, utils_instance, monkeypatch):
+    @pytest.mark.parametrize("bad_date", ["not-a-date", "15/06/2025", "2025-13-45"])
+    async def test_explains_the_date_format_for_a_malformed_date(self, utils_instance, monkeypatch, bad_date):
         # Arrange
         _install_calendar_assistant(monkeypatch, periods={})
 
         # Act
-        result = json.loads(await utils_instance.get_financial_periods("not-a-date"))
+        raw = await utils_instance.get_financial_periods(bad_date)
 
         # Assert
-        assert result["error"] == "internal error"
-        assert result["correlation_id"]
+        assert json.loads(raw) == {
+            "error": "target_date must be a date in YYYY-MM-DD format, for example 2025-06-15."
+        }
 
     async def test_hides_upstream_error_details_from_the_caller(self, utils_instance, monkeypatch):
         # Arrange

@@ -413,7 +413,7 @@ class TestTenantIsolation:
         other = self._utils_for("other-tenant")
         result_json = await other.query_results(populated_instance, "SELECT * FROM my_table")
         result = json.loads(result_json)
-        assert result.get("error") == "instance not found"
+        assert result.get("error", "").startswith("No saved result was found for this instance_id.")
         assert "data" not in result
         # The attempt must not have created a file in the other tenant's namespace.
         assert not _db_path(duckdb_dir, populated_instance, "other-tenant").exists()
@@ -431,7 +431,7 @@ class TestTenantIsolation:
         missing = str(uuid.uuid4())
         result_json = await utils_instance.query_results(missing, "SELECT 1")
         result = json.loads(result_json)
-        assert result.get("error") == "instance not found"
+        assert result.get("error", "").startswith("No saved result was found for this instance_id.")
         assert not _db_path(duckdb_dir, missing).exists()
 
     @pytest.mark.asyncio

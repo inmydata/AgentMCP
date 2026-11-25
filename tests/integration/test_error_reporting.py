@@ -100,3 +100,33 @@ async def test_bad_api_key_says_the_credentials_were_not_accepted(
         payload = await call_error(client, "get_schema")
 
     assert payload["error"].startswith("The inmydata API did not accept the credentials (HTTP 401)")
+
+
+async def test_badly_formed_date_explains_the_format(mcp_client: Client) -> None:
+    async with mcp_client as client:
+        result = await client.call_tool("get_financial_periods", {"target_date": "15/06/2025"})
+
+    assert json.loads(result.content[0].text) == {
+        "error": "target_date must be a date in YYYY-MM-DD format, for example 2025-06-15."
+    }
+
+
+async def test_sql_mistake_lists_the_result_columns(mcp_client: Client) -> None:
+    async with mcp_client as client:
+        schema = json.loads((await client.call_tool("get_schema", {})).content[0].text)
+        subject = schema["subjects"][0]
+        # Several dimensions together give enough combinations for more rows
+        # than the inline sample, so the result is saved for query_results_fast.
+        fields = list(subject["factFieldTypes"])[:3]
+        rows = json.loads((await client.call_tool(
+            "get_rows_fast", {"subject": subject["name"], "select": fields},
+        )).content[0].text)
+        if not rows.get("instance_id"):
+            pytest.skip(f"{subject['name']} / {fields} returned too few rows to be saved")
+        payload = await call_error(client, "query_results_fast", {
+            "instance_id": rows["instance_id"], "sql": 'SELECT SUM("No Such Column") FROM my_table',
+        })
+
+    assert payload["error"].startswith("The SQL could not be run against my_table.")
+    assert f'"{rows["columns"][0]}"' in payload["error"]
+    assert "Binder" not in payload["error"]
