@@ -114,7 +114,7 @@ def _clean_env() -> dict[str, str]:
         for k, v in os.environ.items()
         if not k.upper().startswith(("INMYDATA_", "AGENTIC_RAG_"))
         and not k.upper().endswith("_API_KEY")
-        and k.upper() != "MCP_DEBUG"
+        and k.upper() not in ("MCP_DEBUG", "MCP_SAMPLE_ROWS")
     }
 
 
