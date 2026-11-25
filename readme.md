@@ -197,7 +197,7 @@ Both sets of settings can remain in `.env.test`; never commit it. Existing unpre
 
 The local site's certificate is trusted by Windows but not by Python's own certificate list. The servers are started through `tests/integration/_launch_server.py`, which uses `truststore` so that Python checks certificates against the Windows store. Certificate checking stays on.
 
-`tests/integration/test_error_reporting.py` checks the error messages for common mistakes (wrong subject, field or calendar name, bad API key). It takes names from `get_schema`, so it does not depend on the dev dataset.
+`tests/integration/test_error_reporting.py` checks the exact error messages for common mistakes (wrong subject, field or calendar name, bad API key, badly formed date, SQL mistakes). Like the data tests, it uses the `Inmystore Sales` subject, which both the local dev tenant and the test tenant have.
 
 Every tool error includes a correlation ID. The full detail is in the server's log under that ID. For the remote server in these tests, the log is under pytest's temporary folder: `%TEMP%\pytest-of-<your user>\pytest-current\mcp-server-cwd0\server_remote.log` on Windows.
 

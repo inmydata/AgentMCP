@@ -5,8 +5,8 @@ a mistake a model or user might make: a wrong field, subject or calendar name,
 or a bad API key. It checks the client gets a message it can act on, with a
 correlation id, rather than "internal error".
 
-The subject and field names are taken from ``get_schema``, so these tests do
-not depend on any particular tenant's data.
+Like ``test_dev_api.py``, these tests use the "Inmystore Sales" subject, which
+both the local dev tenant and the test tenant have.
 
 Run with: ``uv run pytest --integration -m integration``
 """
@@ -32,46 +32,51 @@ async def call_error(client: Client, tool: str, args: dict[str, Any] | None = No
     return payload
 
 
-async def first_subject(client: Client) -> tuple[str, str]:
-    """The name and one dimension field of the first subject in the schema."""
-    result = await client.call_tool("get_schema", {})
-    subject = json.loads(result.content[0].text)["subjects"][0]
-    return subject["name"], next(iter(subject["factFieldTypes"]))
+SUBJECT = "Inmystore Sales"
+FY_2024 = [{"field": "Financial Year", "op": "equals", "value": 2024}]
+REJECTED = "The inmydata API rejected the request (HTTP 400): "
+SCHEMA_HINT = (
+    " Call get_schema to see the subjects and field names available; names must "
+    "match the schema exactly, including case and spaces."
+)
 
 
 async def test_wrong_select_field_returns_the_api_message(mcp_client: Client) -> None:
     async with mcp_client as client:
-        subject, _ = await first_subject(client)
-        payload = await call_error(client, "get_rows_fast", {"subject": subject, "select": ["No Such Field"]})
+        payload = await call_error(client, "get_rows_fast", {
+            "subject": SUBJECT, "select": ["Invoice Date", "Sales Value"],
+        })
 
-    assert payload["error"].startswith("The inmydata API rejected the request (HTTP 400): ")
-    assert "No Such Field" in payload["error"]
-    assert "Call get_schema" in payload["error"]
-    assert "https://" not in payload["error"]
+    assert payload["error"] == (
+        REJECTED + "Field 'Invoice Date' not found in subject 'Inmystore Sales'. "
+        "Use a field from the subject schema or remove it from Fields." + SCHEMA_HINT
+    )
 
 
 async def test_wrong_where_field_returns_the_api_message(mcp_client: Client) -> None:
     async with mcp_client as client:
-        subject, field = await first_subject(client)
         payload = await call_error(client, "get_rows_fast", {
-            "subject": subject,
-            "select": [field],
-            "where": [{"field": "No Such Field", "op": "equals", "value": 1}],
+            "subject": SUBJECT,
+            "select": ["Region"],
+            "where": [{"field": "Invoice Year", "op": "equals", "value": 2024}],
         })
 
-    assert payload["error"].startswith("The inmydata API rejected the request (HTTP 400): ")
-    assert "No Such Field" in payload["error"]
+    assert payload["error"] == (
+        REJECTED + "Filter field 'Invoice Year' not found in subject 'Inmystore Sales'. "
+        "Use a field from the subject schema or remove the filter." + SCHEMA_HINT
+    )
 
 
 async def test_wrong_top_n_field_returns_the_api_message(mcp_client: Client) -> None:
     async with mcp_client as client:
-        subject, _ = await first_subject(client)
         payload = await call_error(client, "get_top_n_fast", {
-            "subject": subject, "group_by": "No Such Field", "order_by": "No Such Metric", "n": 3,
+            "subject": SUBJECT, "group_by": "Shop", "order_by": "Sales Value", "n": 3, "where": FY_2024,
         })
 
-    assert payload["error"].startswith("The inmydata API rejected the request (HTTP 400): ")
-    assert "Call get_schema" in payload["error"]
+    assert payload["error"] == (
+        REJECTED + "Field 'Shop' not found in subject 'Inmystore Sales'. "
+        "Use a field from the subject schema or remove it from Fields." + SCHEMA_HINT
+    )
 
 
 async def test_wrong_subject_explains_the_likely_causes(mcp_client: Client) -> None:
@@ -111,39 +116,18 @@ async def test_badly_formed_date_explains_the_format(mcp_client: Client) -> None
     }
 
 
-MAX_SUBJECTS_TRIED = 5
-
-
-async def saved_result(client: Client) -> dict | None:
-    """A get_rows_fast result large enough to be saved for query_results_fast, or None.
-
-    Tries the first few subjects in the schema, selecting each one's first
-    three dimensions: together they give enough combinations for more rows
-    than the inline sample. Subjects that return an error (for example one
-    not enabled for the API) are passed over.
-    """
-    schema = json.loads((await client.call_tool("get_schema", {})).content[0].text)
-    for subject in schema["subjects"][:MAX_SUBJECTS_TRIED]:
-        fields = list(subject["factFieldTypes"])[:3]
-        if not fields:
-            continue
-        rows = json.loads((await client.call_tool(
-            "get_rows_fast", {"subject": subject["name"], "select": fields},
-        )).content[0].text)
-        if rows.get("instance_id"):
-            return rows
-    return None
-
-
 async def test_sql_mistake_lists_the_result_columns(mcp_client: Client) -> None:
     async with mcp_client as client:
-        rows = await saved_result(client)
-        if rows is None:
-            pytest.skip(f"none of the first {MAX_SUBJECTS_TRIED} subjects returned enough rows to be saved")
+        # 25 stores in FY2024: more than the 10-row sample, so the result is saved.
+        rows = json.loads((await client.call_tool("get_rows_fast", {
+            "subject": SUBJECT, "select": ["Store", "Sales Value"], "where": FY_2024,
+        })).content[0].text)
+        assert rows["instance_id"], rows
         payload = await call_error(client, "query_results_fast", {
-            "instance_id": rows["instance_id"], "sql": 'SELECT SUM("No Such Column") FROM my_table',
+            "instance_id": rows["instance_id"], "sql": 'SELECT SUM("Sales") FROM my_table',
         })
 
-    assert payload["error"].startswith("The SQL could not be run against my_table.")
-    assert f'"{rows["columns"][0]}"' in payload["error"]
-    assert "Binder" not in payload["error"]
+    assert payload["error"] == (
+        "The SQL could not be run against my_table. Check that it is valid DuckDB SQL "
+        'and uses only these columns, in double quotes: "Store", "Sales Value".'
+    )
