@@ -799,7 +799,7 @@ class TestGetCalendarPeriodDateRangeExplicit:
 
         # Assert
         assert result["start_date"] == "2024-01-01"
-        assert result["period_type"] == period_type
+        assert result["period_type"] == period_type.lower()
 
     async def test_rejects_an_unknown_period_type(self, utils_instance, monkeypatch):
         # Arrange
@@ -905,6 +905,7 @@ class TestGetCalendarPeriodDateRangeDefaults:
         pytest.param("week", 10, id="week"),
         pytest.param("year", 1, id="year"),
         pytest.param("month", 3, id="month"),
+        pytest.param("Quarter", 1, id="mixed-case-quarter"),
     ])
     async def test_uses_the_current_period_number_for_the_requested_type(
         self, utils_instance, monkeypatch, period_type, expected_number,

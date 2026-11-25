@@ -965,6 +965,9 @@ class mcp_utils:
             if not self.tenant or not self.calendar:
                 return json.dumps({"error": "Tenant and Calendar variables must be set"})
 
+            if period_type is not None:
+                period_type = period_type.lower()
+
             # If any parameter is missing, use current financial period
             if financial_year is None or period_number is None or period_type is None:
                 # Get current date's financial period info

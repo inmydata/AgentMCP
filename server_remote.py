@@ -482,39 +482,8 @@ async def get_calendar_period_date_range(
         JSON string with start_date and end_date
     """
     try:
-        # If any parameter is None, fetch current financial periods
-        if financial_year is None or period_number is None or period_type is None:
-            periods_result = await (await utils()).get_financial_periods(None)
-            periods_data = json.loads(periods_result)
-            
-            if "error" in periods_data:
-                return periods_result
-            
-            # Parse the periods JSON
-            periods_str = periods_data.get("periods", "{}")
-            try:
-                periods = json.loads(periods_str) if isinstance(periods_str, str) else periods_str
-            except:
-                periods = {}
-            
-            # Auto-fill missing parameters from current periods
-            if financial_year is None:
-                financial_year = periods.get("year", 0)
-            
-            if period_number is None:
-                # Default to current month if not specified
-                period_number = periods.get("month", 1)
-            
-            if period_type is None:
-                period_type = "month"  # Default to month
-        
-        if not financial_year:
-            return json.dumps({"error": "Could not determine financial_year"})
-        if not period_number:
-            return json.dumps({"error": "Could not determine period_number"})
-        if not period_type:
-            return json.dumps({"error": "period_type parameter is required"})
-            
+        # mcp_utils fills any missing argument from today's financial period,
+        # choosing the period number that matches period_type.
         return await (await utils()).get_calendar_period_date_range(financial_year, period_number, period_type)
 
     except UserFacingError as exc:

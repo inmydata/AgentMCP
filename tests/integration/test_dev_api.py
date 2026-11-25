@@ -100,6 +100,20 @@ async def test_get_calendar_period_date_range_defaults_to_the_current_month(
     assert result["start_date"] <= date.today().isoformat() <= result["end_date"]
 
 
+@pytest.mark.parametrize("period_type", ["quarter", "week"])
+async def test_get_calendar_period_date_range_defaults_to_the_current_period_of_the_given_type(
+    mcp_client: Client, period_type: str,
+) -> None:
+    async with mcp_client as client:
+        today = json.loads((await call_json(client, "get_financial_periods"))["periods"])
+        result = await call_json(client, "get_calendar_period_date_range", {"period_type": period_type})
+
+    assert result["financial_year"] == today["year"]
+    assert result["period_number"] == today[period_type]
+    assert result["period_type"] == period_type
+    assert result["start_date"] <= date.today().isoformat() <= result["end_date"]
+
+
 # --- Data tools ---------------------------------------------------------------
 # Expected figures are for financial year 2024 of the dev tenant's
 # "Inmystore Sales" subject. It is a closed year, so they should not change.
