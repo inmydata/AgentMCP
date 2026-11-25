@@ -50,11 +50,11 @@ AUTH_SERVER = "auth.platform.example.test"
 ISSUER = f"https://{AUTH_SERVER}"
 
 _MANAGED_ENV = (
-    "_API_KEY",
-    "ACME_API_KEY",
-    "RIVAL_API_KEY",
-    "TENANT-A_API_KEY",
-    "TENANT-B_API_KEY",
+    "_API_KEY",
+    "ACME_API_KEY",
+    "RIVAL_API_KEY",
+    "TENANT-A_API_KEY",
+    "TENANT-B_API_KEY",
     "INMYDATA_MCP_HOST",
     "INMYDATA_SERVER",
     "INMYDATA_AUTH_SERVER",
@@ -83,7 +83,7 @@ def _make_fake_utils():
 
     class FakeUtils:
         failure: BaseException | None = None
-        periods_reply: str = json.dumps({"periods": json.dumps({"FinancialYear": 2025, "Month": 3})})
+        periods_reply: str = json.dumps({"periods": json.dumps({"year": 2025, "month": 3})})
 
         def __init__(self, api_key, tenant, calendar, user, session_id, server):
             self.built_with = {
@@ -1275,43 +1275,37 @@ class TestCalendarRangeFillsInMissingArguments:
         ("periods_reply", "given", "expected"),
         [
             pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
+                {"periods": json.dumps({"year": 2025, "month": 3})},
                 {},
                 (2025, 3, "month"),
                 id="all-from-periods",
             ),
             pytest.param(
-                {"periods": {"FinancialYear": 2025, "Month": 2}},
+                {"periods": {"year": 2025, "month": 2}},
                 {},
                 (2025, 2, "month"),
                 id="periods-as-object",
             ),
             pytest.param(
-                {"periods": json.dumps({"Year": 2024, "Period": 7})},
-                {},
-                (2024, 7, "month"),
-                id="alternative-key-names",
-            ),
-            pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025})},
+                {"periods": json.dumps({"year": 2025})},
                 {},
                 (2025, 1, "month"),
                 id="month-defaults-to-one",
             ),
             pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
+                {"periods": json.dumps({"year": 2025, "month": 3})},
                 {"financial_year": 2020},
                 (2020, 3, "month"),
                 id="given-year-is-kept",
             ),
             pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
+                {"periods": json.dumps({"year": 2025, "month": 3})},
                 {"period_number": 9},
                 (2025, 9, "month"),
                 id="given-period-is-kept",
             ),
             pytest.param(
-                {"periods": json.dumps({"FinancialYear": 2025, "Month": 3})},
+                {"periods": json.dumps({"year": 2025, "month": 3})},
                 {"period_type": "week"},
                 (2025, 3, "week"),
                 id="given-type-is-kept",

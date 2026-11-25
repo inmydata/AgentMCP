@@ -688,7 +688,7 @@ class TestGetFinancialPeriods:
 
     async def test_returns_the_periods_for_the_requested_date(self, utils_instance, monkeypatch):
         # Arrange
-        periods = {"Year": 2024, "Month": 3, "Week": 10, "Quarter": 1}
+        periods = {"year": 2024, "month": 3, "week": 10, "quarter": 1}
         _install_calendar_assistant(monkeypatch, periods=periods)
 
         # Act
@@ -700,7 +700,7 @@ class TestGetFinancialPeriods:
 
     async def test_uses_todays_date_when_none_is_given(self, utils_instance, monkeypatch):
         # Arrange
-        _install_calendar_assistant(monkeypatch, periods={"Year": 2024})
+        _install_calendar_assistant(monkeypatch, periods={"year": 2024})
         before = date.today()
 
         # Act
@@ -872,7 +872,7 @@ class TestGetCalendarPeriodDateRangeExplicit:
 # get_calendar_period_date_range: defaults taken from the current period
 # ---------------------------------------------------------------------------
 
-CURRENT_PERIODS = {"FinancialYear": 2025, "Month": 3, "Quarter": 1, "Week": 10}
+CURRENT_PERIODS = {"year": 2025, "month": 3, "quarter": 1, "week": 10}
 
 
 class TestGetCalendarPeriodDateRangeDefaults:
@@ -969,11 +969,11 @@ class TestGetCalendarPeriodDateRangeDefaults:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "Suspected bug: the real CalendarAssistant returns a FinancialPeriodDetails object "
-            "(attributes year/month/week/quarter). get_financial_periods cannot serialise it, so "
-            "it falls back to str(), which get_calendar_period_date_range then fails to parse and "
-            "treats as {}. It also looks up 'FinancialYear'/'Month' keys that the object never "
-            "has. Calling with no arguments therefore always says it cannot determine the year."
+            "SDK bug: the real CalendarAssistant returns a FinancialPeriodDetails object "
+            "(attributes year/month/week/quarter) that json.dumps cannot serialise, so "
+            "get_financial_periods falls back to str(), which get_calendar_period_date_range then "
+            "fails to parse and treats as {}. Calling with no arguments therefore always says it "
+            "cannot determine the year. Remove this marker once the SDK object is serialisable."
         ),
     )
     async def test_defaults_to_the_current_month_with_the_real_period_object(self, utils_instance, monkeypatch):

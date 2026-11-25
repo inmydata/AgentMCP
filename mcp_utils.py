@@ -978,7 +978,7 @@ class mcp_utils:
                 
                 # Set defaults based on current periods
                 if financial_year is None:
-                    financial_year = periods.get("FinancialYear", periods.get("Year", 0))
+                    financial_year = periods.get("year", 0)
                 
                 if period_type is None:
                     period_type = "month"  # Default to month
@@ -986,11 +986,11 @@ class mcp_utils:
                 if period_number is None:
                     # Use current period number based on period_type
                     if period_type == "month":
-                        period_number = periods.get("Month", periods.get("Period", 1))
+                        period_number = periods.get("month", 1)
                     elif period_type == "quarter":
-                        period_number = periods.get("Quarter", 1)
+                        period_number = periods.get("quarter", 1)
                     elif period_type == "week":
-                        period_number = periods.get("Week", 1)
+                        period_number = periods.get("week", 1)
                     elif period_type == "year":
                         period_number = 1  # Year period number is typically 1
                     else:

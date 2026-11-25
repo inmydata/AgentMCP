@@ -513,7 +513,7 @@ async def test_date_range_with_all_arguments_does_not_look_up_current_periods(se
 async def test_date_range_with_no_arguments_uses_the_current_financial_year_and_month(server, monkeypatch):
     fake = _use(
         server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025, Month=7),
+        get_financial_periods=_periods(year=2025, month=7),
         get_calendar_period_date_range='{"ok": true}',
     )
 
@@ -525,7 +525,7 @@ async def test_date_range_with_no_arguments_uses_the_current_financial_year_and_
 async def test_date_range_fills_only_the_missing_arguments(server, monkeypatch):
     fake = _use(
         server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025, Month=7),
+        get_financial_periods=_periods(year=2025, month=7),
         get_calendar_period_date_range='{"ok": true}',
     )
 
@@ -537,7 +537,7 @@ async def test_date_range_fills_only_the_missing_arguments(server, monkeypatch):
 async def test_date_range_with_only_the_period_number_given_fills_year_and_type(server, monkeypatch):
     fake = _use(
         server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025, Month=7),
+        get_financial_periods=_periods(year=2025, month=7),
         get_calendar_period_date_range='{"ok": true}',
     )
 
@@ -546,22 +546,10 @@ async def test_date_range_with_only_the_period_number_given_fills_year_and_type(
     assert fake.last_call("get_calendar_period_date_range") == (2025, 3, "month")
 
 
-async def test_date_range_accepts_alternative_period_key_names(server, monkeypatch):
-    fake = _use(
-        server, monkeypatch,
-        get_financial_periods=_periods(Year=2024, Period=4),
-        get_calendar_period_date_range='{"ok": true}',
-    )
-
-    await server.get_calendar_period_date_range()
-
-    assert fake.last_call("get_calendar_period_date_range") == (2024, 4, "month")
-
-
 async def test_date_range_accepts_periods_that_are_already_a_json_object(server, monkeypatch):
     fake = _use(
         server, monkeypatch,
-        get_financial_periods=json.dumps({"periods": {"FinancialYear": 2023, "Month": 2}}),
+        get_financial_periods=json.dumps({"periods": {"year": 2023, "month": 2}}),
         get_calendar_period_date_range='{"ok": true}',
     )
 
@@ -573,7 +561,7 @@ async def test_date_range_accepts_periods_that_are_already_a_json_object(server,
 async def test_date_range_defaults_the_period_number_to_one_when_the_periods_lack_it(server, monkeypatch):
     fake = _use(
         server, monkeypatch,
-        get_financial_periods=_periods(FinancialYear=2025),
+        get_financial_periods=_periods(year=2025),
         get_calendar_period_date_range='{"ok": true}',
     )
 
