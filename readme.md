@@ -255,7 +255,9 @@ Tool errors are JSON: `{"error": "<message>", "correlation_id": "<id>"}`. The me
 | inmydata API 5xx | Fixed text, plus the platform's support reference if the response has one. The response body is not passed on. |
 | Cannot connect, or no response in time | Fixed text |
 | `query_results_fast`: mistake in the caller's SQL (syntax, unknown column or table, bad conversion) | Fixed text plus the column names of `my_table`, which the caller already has. DuckDB's own message stays in the log. |
-| `query_results_fast`: malformed `instance_id` or blocked SQL statement (`ATTACH`, `COPY`, ...) | `invalid request`. Deliberately does not say which check refused it. |
+| `query_results_fast`: malformed `instance_id` | Fixed text saying the `instance_id` is not in the expected format and to use it exactly as `get_rows_fast` / `get_top_n_fast` returned it. The value sent is not repeated back. |
+| `query_results_fast`: blocked SQL statement (`ATTACH`, `COPY`, `SET`, ...) | Fixed text saying this type of statement is not allowed and to query `my_table`. Does not name the keyword that was blocked. |
+| `query_results_fast`: no tenant set on the server | `invalid request` |
 | `query_results_fast`: `instance_id` not found, or belongs to another tenant | Fixed text saying to run `get_rows_fast` / `get_top_n_fast` again. The same in both cases. |
 | Anything else, including a bug in this server or a DuckDB engine failure | `internal error` |
 
