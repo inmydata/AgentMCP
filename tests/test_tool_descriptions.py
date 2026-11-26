@@ -5,15 +5,19 @@ tests fail when one of those names stops existing, which is how descriptions
 usually go stale (a tool or parameter is renamed and the text is not). They
 also check that each server publishes the shared descriptions, marks required
 parameters as required, and lists the allowed filter operators in the schema.
+Output examples in the descriptions are compared with what mcp_utils really
+returns, using fakes for the inmydata SDK.
 
 Both servers are loaded over the MCP protocol with an in-memory client, so
 what is checked is what a real client sees.
 """
 import importlib
+import json
 import re
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from fastmcp import Client
 
@@ -21,7 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import dotenv  # noqa: E402
 import mcp_logging  # noqa: E402
+import mcp_utils as mcp_utils_module  # noqa: E402
 import tool_descriptions as docs  # noqa: E402
+from inmydata.CalendarAssistant import FinancialPeriodDetails  # noqa: E402
+from mcp_utils import mcp_utils  # noqa: E402
 from tool_descriptions import WhereCondition, where_as_dicts  # noqa: E402
 
 DESCRIPTIONS = {
@@ -45,6 +52,15 @@ REQUIRED = {
 TOOL_NAME_RE = re.compile(r"\b(?:get_[a-z_]+|query_results_fast|agentic_rag_query)\b")
 # A keyword argument in an example, such as subject="Sales" or n=10.
 EXAMPLE_ARG_RE = re.compile(r"\b([a-z_]+)=")
+# An output example: a line starting "Example result", then indented JSON lines.
+EXAMPLE_RESULT_RE = re.compile(r"^Example result[^\n]*:\n((?:  [^\n]*\n?)+)", re.MULTILINE)
+
+
+def _example_result(text: str) -> dict:
+    """Parse the one output example in a description."""
+    blocks = EXAMPLE_RESULT_RE.findall(text)
+    assert len(blocks) == 1, f"expected one output example, found {len(blocks)}"
+    return json.loads(blocks[0])
 
 
 @pytest.fixture(params=["server", "server_remote"])
@@ -139,3 +155,73 @@ def test_where_as_dicts_passes_plain_dicts_through():
 
     assert where_as_dicts(where) == where
     assert where_as_dicts(None) == []
+
+
+# --- Output examples ----------------------------------------------------------
+
+class _FakeDriver:
+    """Stands in for StructuredDataDriver; returns ``result`` for every query."""
+
+    result: pd.DataFrame | None = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_data(self, *args):
+        return _FakeDriver.result
+
+
+@pytest.fixture
+def real_utils(tmp_path, monkeypatch):
+    """An mcp_utils with the SDK faked, the default sample size and DuckDB under tmp_path."""
+    monkeypatch.setenv("MCP_DUCKDB_LOCATION", str(tmp_path))
+    monkeypatch.delenv("MCP_SAMPLE_ROWS", raising=False)
+    monkeypatch.setattr(mcp_utils_module, "StructuredDataDriver", _FakeDriver)
+    return mcp_utils("key", "test", "Default", "user", "session", None)
+
+
+def test_every_output_example_is_valid_json():
+    for name, text in DESCRIPTIONS.items():
+        for block in EXAMPLE_RESULT_RE.findall(text):
+            json.loads(block)  # raises, naming the bad character, if not
+
+
+async def test_get_rows_example_matches_a_real_sampled_result(real_utils):
+    example = _example_result(docs.GET_ROWS_FAST)
+    _FakeDriver.result = pd.DataFrame({"Store": [f"s{i}" for i in range(25)], "Sales Value": range(25)})
+
+    real = json.loads(await real_utils.get_rows("Sales", ["Store", "Sales Value"]))
+
+    assert set(real) == set(example)
+    assert real["columns"] == example["columns"]
+    assert real["row_count"] == example["row_count"]
+    assert real["instance_id"] and example["instance_id"]
+    assert real["note"].startswith(example["note"].removesuffix(" ..."))
+
+
+async def test_get_top_n_example_matches_a_real_complete_result(real_utils):
+    example = _example_result(docs.GET_TOP_N_FAST)
+    _FakeDriver.result = pd.DataFrame({"Store": [f"s{i}" for i in range(10)], "Sales Value": range(10)})
+
+    real = json.loads(await real_utils.get_top_n("Sales", "Store", "Sales Value", 10))
+
+    assert set(real) == set(example)
+    for key in ("ranking_type", "n", "group_by", "order_by", "row_count", "columns", "instance_id"):
+        assert real[key] == example[key], key
+
+
+async def test_get_financial_periods_example_is_exactly_what_is_returned(real_utils, monkeypatch):
+    example = _example_result(docs.GET_FINANCIAL_PERIODS)
+
+    class _Assistant:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_financial_periods(self, _date):
+            return FinancialPeriodDetails(year=2025, month=6, week=24, quarter=2)
+
+    monkeypatch.setattr("inmydata.CalendarAssistant.CalendarAssistant", _Assistant)
+
+    real = json.loads(await real_utils.get_financial_periods("2025-06-15"))
+
+    assert real == example

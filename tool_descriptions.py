@@ -19,6 +19,10 @@ Notes:
     tests in tests/test_tool_descriptions.py.
   - Name other tools and parameters only where a caller needs them. The tests
     check that every tool and parameter named here exists.
+  - Output examples appear only where a caller must plan a next step from the
+    output's layout. Each follows a line starting "Example result", must be
+    valid JSON, and uses <placeholder> values so they are not mistaken for
+    data. The tests check its keys against what mcp_utils really returns.
   - The MCP library checks each call's arguments against the published JSON
     schema before the tool runs, so only the spellings in the schema are
     accepted (for example "equals", not "=" or "eq"). Pydantic aliases or
@@ -197,6 +201,12 @@ Result: JSON with row_count (total rows), columns, data and instance_id.
   The full result is saved: use query_results_fast with that instance_id to read or summarise
   every row. Do not answer from the sample alone.
 
+Example result when only a sample is returned (values in <> are placeholders; data shortened):
+  {"subject": "Sales", "row_count": 25, "columns": ["Store", "Sales Value"],
+   "data": [{"Store": "<store>", "Sales Value": "<number>"}],
+   "instance_id": "<uuid>",
+   "note": "data holds only the first 10 of 25 rows. Use query_results_fast with this instance_id ..."}
+
 Example (names are illustrative; use the names from get_schema). "Sales and profit by region in
 financial year 2025":
   subject="Sales", select=["Region", "Sales Value", "Profit"],
@@ -222,8 +232,14 @@ individual records before they are totalled, and OR conditions combined with oth
 must be put in brackets with start_group and end_group.
 
 Result: JSON with ranking_type ("top" or "bottom"), n, row_count, columns, data and
-instance_id. If instance_id is not blank, data holds only a sample: use query_results_fast with
-that instance_id to read every row.
+instance_id. If instance_id is not blank, data holds only a sample and a note says how many
+rows: use query_results_fast with that instance_id to read every row.
+
+Example result (values in <> are placeholders; data shortened):
+  {"subject": "Sales", "ranking_type": "top", "n": 10, "group_by": "Store",
+   "order_by": "Sales Value", "row_count": 10, "columns": ["Store", "Sales Value"],
+   "data": [{"Store": "<store>", "Sales Value": "<number>"}],
+   "instance_id": ""}
 
 Example (names are illustrative; use the names from get_schema). "Top 10 stores by sales in
 financial year 2025":
@@ -294,9 +310,12 @@ in December 2024). Use it to turn "today" or a specific date into period numbers
 filtering on financial year or period fields from get_schema. For the start and end dates of a
 period, use get_calendar_period_date_range.
 
-Result: JSON {"periods": "...", "date": "YYYY-MM-DD"}. periods is itself JSON text, so decode it
-a second time. It decodes to {"year": 2025, "quarter": 2, "month": 6, "week": 24}, where year is
-the financial year.
+Result: JSON with periods and date. periods is itself JSON text, so decode it a second time.
+It decodes to the financial year (year) and the quarter, month and week numbers within it.
+
+Example result for target_date="2025-06-15":
+  {"periods": "{\\"year\\": 2025, \\"month\\": 6, \\"week\\": 24, \\"quarter\\": 2}",
+   "date": "2025-06-15"}
 """
 
 GET_CALENDAR_PERIOD_DATE_RANGE = """\
