@@ -51,6 +51,7 @@ Required environment variables (see `.env.example`):
 - `INMYDATA_MCP_HOST` (optional) - MCP server host (default: mcp.inmydata.ai)
 - `INMYDATA_AUTH_SERVER` (optional) - OAuth authorization server URL (default: https://auth.inmydata.com)
 - `INMYDATA_SERVER` (optional) - inmydata server (default: inmydata.com)
+- `SSL_CERT_FILE` (optional, local development only) - CA bundle for outgoing HTTPS calls. Needed when `INMYDATA_AUTH_SERVER` points at a local auth server with an mkcert certificate; see [Using a local auth server](#using-a-local-auth-server-mkcert-certificates)
 
 ## Usage
 
@@ -101,6 +102,39 @@ When OAuth is enabled, the server uses bearer token authentication:
 - `x-inmydata-server` (optional) - Server override
 
 The tenant is automatically extracted from the token's `client_imd_tenant` or `imd_tenant` claim.
+
+##### Using a local auth server (mkcert certificates)
+
+If `INMYDATA_AUTH_SERVER` points at an auth server running on your own machine (for example `auth-dev.inmydata.com` mapped to `127.0.0.1` in your `hosts` file), that server will usually use a certificate made by [mkcert](https://github.com/FiloSottile/mkcert).
+
+`mkcert -install` makes Windows and your browsers trust that certificate, but Python does not. `httpx` checks certificates against its own `certifi` bundle, which does not contain the mkcert root CA. Without the fix below:
+
+- `POST /connect/token` returns **500**, because the token proxy cannot connect to the auth server (`CERTIFICATE_VERIFY_FAILED` in the server log). MCP clients such as ChatGPT fail to sign in.
+- Once that is fixed, token checks on `/mcp` would fail in the same way, because the signing keys (JWKS) are also downloaded from the auth server.
+
+To fix it, give Python a CA bundle that contains both the normal `certifi` certificates and your mkcert root CA:
+
+```bash
+# Git Bash; run from the repository root
+mkdir -p "$USERPROFILE/.certs"
+B="$USERPROFILE/.certs/certifi-plus-mkcert.pem"
+cat "$(.venv/Scripts/python -c 'import certifi; print(certifi.where())')" > "$B"
+echo >> "$B"
+cat "$(mkcert -CAROOT)/rootCA.pem" >> "$B"
+```
+
+Then add this to `.env`:
+
+```
+SSL_CERT_FILE=C:\Users\<you>\.certs\certifi-plus-mkcert.pem
+```
+
+Notes:
+
+- The bundle must contain both sets of certificates. A file with only the mkcert root CA would stop calls to real servers, such as `auth.inmydata.com`, from working.
+- Keep the file outside the repository.
+- It is a copy, so rebuild it if you upgrade `certifi` or regenerate your mkcert CA.
+- This is for local development only. Do not set `SSL_CERT_FILE` in deployed environments.
 
 ##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false or unset - default)
 
