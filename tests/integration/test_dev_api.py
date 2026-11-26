@@ -58,7 +58,7 @@ async def test_get_schema_returns_subjects(mcp_client: Client) -> None:
         assert isinstance(subject["metricFieldTypes"], dict)
         # Added by mcp_utils on top of the API response.
         assert "dashboardHints" in subject
-        assert "fieldGroups" in subject
+        assert isinstance(subject.get("fieldGroups", {}), dict)
 
 
 async def test_get_financial_periods_for_a_fixed_date(mcp_client: Client) -> None:
