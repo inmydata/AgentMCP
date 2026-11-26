@@ -22,7 +22,7 @@ from typing import Optional
 import httpx
 
 
-_log = logging.getLogger("agentic_rag")
+_log = logging.getLogger("agentmcp.agentic_rag")
 
 
 class AgenticRagError(Exception):

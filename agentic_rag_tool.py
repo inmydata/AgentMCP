@@ -30,7 +30,7 @@ from errors import log_tool_error
 from mcp_logging import logger as agentmcp_logger
 
 
-_log = logging.getLogger("agentic_rag")
+_log = logging.getLogger("agentmcp.agentic_rag")
 
 
 _DESCRIPTION = (

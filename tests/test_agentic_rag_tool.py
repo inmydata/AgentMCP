@@ -223,6 +223,12 @@ async def test_unconfigured_tool_does_not_name_the_missing_settings_to_the_clien
     assert "AGENTIC_RAG" not in result
 
 
+def test_missing_configuration_is_reported_on_the_agentmcp_log(logs):
+    _server()
+
+    assert any("agentic_rag not configured" in line for line in logs)
+
+
 async def test_unconfigured_tool_with_a_default_tenant_does_not_ask_for_external_id(monkeypatch):
     monkeypatch.setenv("AGENTIC_RAG_DEFAULT_EXTERNAL_ID", "acme")
     mcp = _server()
