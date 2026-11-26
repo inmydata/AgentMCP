@@ -49,8 +49,11 @@ Usual order of calls:
    query_results_fast with that instance_id to work with every row.
 Use get_answer_slow only for questions that need an explanation rather than figures.
 
-Every tool returns JSON. If a call fails, the result is {"error": "..."}, sometimes with a
-correlation_id. The message says what to correct; fix the call and try again.
+The data and calendar tools return JSON. If one fails, the result is {"error": "..."},
+sometimes with a correlation_id. agentic_rag_query returns plain text, and its errors start
+with "error:". A call whose arguments do not match the tool's schema is refused before the
+tool runs, with a message naming the problem. In every case the message says what to correct;
+fix the call and try again.
 """
 
 # ---------------------------------------------------------------------------
@@ -65,11 +68,13 @@ FilterOp = Literal[
 class WhereCondition(BaseModel):
     """One filter condition in the ``where`` list of get_rows_fast and get_top_n_fast.
 
-    Unknown keys (for example ``case_insensitive``) are kept and passed on to
-    mcp_utils.parse_where unchanged.
+    Unknown keys are refused (the published schema has additionalProperties
+    false). mcp_utils.parse_where also reads older keys such as "logic" and
+    "column", and "logic" would override "logical"; refusing extras keeps
+    callers to the keys documented here.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     field: str = Field(
         description="Field name, copied exactly from get_schema. May be a dimension or a metric.",
@@ -77,8 +82,9 @@ class WhereCondition(BaseModel):
     op: FilterOp = Field(
         default="equals",
         description=(
-            "Comparison. contains, not_contains and starts_with match part of a text value "
-            "(no wildcards needed). Text comparisons ignore case."
+            "Comparison. contains and not_contains match text anywhere in the value, and "
+            "starts_with matches the beginning of it (no wildcards needed). For dates, use "
+            "gte and lt, not equals or lte (see the tool description)."
         ),
     )
     value: Union[bool, int, float, str] = Field(
@@ -86,6 +92,10 @@ class WhereCondition(BaseModel):
             "A single value to compare with. Dates as YYYY-MM-DD. Not a list: for several "
             "values, use one condition per value joined with OR, in brackets."
         ),
+    )
+    case_insensitive: bool = Field(
+        default=True,
+        description="Text comparisons ignore case unless this is false.",
     )
     logical: Literal["AND", "OR"] = Field(
         default="AND",
@@ -191,9 +201,15 @@ Filtering (where):
     [{"field": "Financial Year", "op": "equals", "value": 2024},
      {"field": "Region", "op": "equals", "value": "Wales", "start_group": 1},
      {"field": "Region", "op": "equals", "value": "Scotland", "logical": "OR", "end_group": 1}]
-- Dates are YYYY-MM-DD. gte and lte include the dates given. For relative periods (this month,
-  last quarter), get the dates or period numbers from get_calendar_period_date_range or
-  get_financial_periods first.
+- Dates are YYYY-MM-DD. To filter a day or a range of days, use gte the first day and lt the
+  day after the last day; June 2024 is gte 2024-06-01 and lt 2024-07-01. This works for every
+  date field. Some date fields also hold times, and a date on its own means midnight, so
+  equals or lte with a date would leave out the rest of that day without any error.
+- For relative periods (this month, last quarter), get the dates or period numbers from
+  get_calendar_period_date_range or get_financial_periods first.
+- Select only the fields you need. Results whose export would exceed 50 MB are refused, and
+  selecting a detailed field (such as a transaction id) can do that. If it happens, add
+  filters or select fewer fields.
 
 Result: JSON with row_count (total rows), columns, data and instance_id.
 - If instance_id is blank, data holds every row.
@@ -262,7 +278,7 @@ way to see or summarise every row.
 - Every row the query returns is sent back, with no limit. Summarise with GROUP BY or
   aggregates, or add a LIMIT, rather than SELECT * on a large result.
 
-Result: JSON with row_count, columns and data.
+Result: JSON with row_count, columns, data and instance_id.
 
 Example: total sales for each region, highest first:
   instance_id="<from the earlier result>",
@@ -321,8 +337,8 @@ Example result for target_date="2025-06-15":
 GET_CALENDAR_PERIOD_DATE_RANGE = """\
 Get the first and last dates of a year, quarter, month or week in the tenant's financial
 calendar. Despite the name, periods follow the financial calendar, not calendar months:
-financial month 1 of 2025 may run from 2024-12-30 to 2025-01-26. Use the dates to filter a date
-field with gte and lte.
+financial month 1 of 2025 may run from 2024-12-30 to 2025-01-26. To filter a date field to the
+period, use gte start_date and lt the day after end_date (see get_rows_fast).
 
 Arguments:
 - For a specific period, pass all three: financial_year, period_number and period_type.

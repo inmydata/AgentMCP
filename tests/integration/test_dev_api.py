@@ -244,6 +244,44 @@ async def test_a_metric_filter_applies_to_records_before_they_are_totalled(mcp_c
     assert result["row_count"] == 0
 
 
+JUNE_2024_SALES = 6_003_636.40
+
+
+@pytest.mark.parametrize("field", ["Date", "Date Time"])
+async def test_gte_and_lt_select_whole_days_on_every_date_field(mcp_client: Client, field: str) -> None:
+    # The descriptions recommend gte the first day and lt the day after the
+    # last, because it works whether or not the field holds times.
+    async with mcp_client as client:
+        result = await call_json(client, "get_rows_fast", {
+            "subject": SUBJECT,
+            "select": ["Sales Value"],
+            "where": [
+                {"field": field, "op": "gte", "value": "2024-06-01"},
+                {"field": field, "op": "lt", "value": "2024-07-01"},
+            ],
+        })
+
+    assert result["data"] == [{"Sales Value": pytest.approx(JUNE_2024_SALES, abs=0.01)}]
+
+
+async def test_lte_with_a_date_leaves_out_the_rest_of_the_day_on_a_date_time_field(
+    mcp_client: Client,
+) -> None:
+    # Why the descriptions warn against lte and equals for dates: on a field
+    # holding times, a bare date means midnight, so this matches nothing.
+    async with mcp_client as client:
+        result = await call_json(client, "get_rows_fast", {
+            "subject": SUBJECT,
+            "select": ["Sales Value"],
+            "where": [
+                {"field": "Date Time", "op": "gte", "value": "2024-06-03"},
+                {"field": "Date Time", "op": "lte", "value": "2024-06-03"},
+            ],
+        })
+
+    assert result["data"] == [{"Sales Value": 0}]
+
+
 async def test_top_n_refuses_zero(mcp_client: Client) -> None:
     async with mcp_client as client:
         result = await client.call_tool("get_top_n_fast", {

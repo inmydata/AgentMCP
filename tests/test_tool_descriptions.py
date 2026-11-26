@@ -64,21 +64,26 @@ def _example_result(text: str) -> dict:
 
 
 @pytest.fixture(params=["server", "server_remote"])
-async def published_tools(request, monkeypatch):
-    """The tools (name -> mcp Tool) and instructions one server publishes."""
+def server_module(request, monkeypatch):
+    """A freshly imported server module (local or remote) with no import side effects."""
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setattr(mcp_logging, "configure_logging", lambda *a, **k: None)
     monkeypatch.setenv("INMYDATA_USE_OAUTH", "false")
     for name in ("AGENTIC_RAG_BASE_URL", "AGENTIC_RAG_PSK", "AGENTIC_RAG_DEFAULT_EXTERNAL_ID"):
         monkeypatch.delenv(name, raising=False)
     sys.modules.pop(request.param, None)
-    module = importlib.import_module(request.param)
     try:
-        async with Client(module.mcp) as client:
-            tools = {t.name: t for t in await client.list_tools()}
-            yield tools, client.initialize_result.instructions
+        yield importlib.import_module(request.param)
     finally:
         sys.modules.pop(request.param, None)
+
+
+@pytest.fixture
+async def published_tools(server_module):
+    """The tools (name -> mcp Tool) and instructions one server publishes."""
+    async with Client(server_module.mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+        yield tools, client.initialize_result.instructions
 
 
 async def test_each_tool_publishes_the_shared_description(published_tools):
@@ -129,6 +134,30 @@ async def test_filter_operators_and_period_types_are_listed_in_the_schema(publis
     assert condition["logical"]["enum"] == ["AND", "OR"]
     period = tools["get_calendar_period_date_range"].inputSchema["properties"]["period_type"]
     assert {"enum": ["year", "quarter", "month", "week"], "type": "string"} in period["anyOf"]
+
+
+async def test_filter_conditions_list_case_insensitive_and_allow_no_other_keys(published_tools):
+    tools, _ = published_tools
+
+    condition = tools["get_rows_fast"].inputSchema["$defs"]["WhereCondition"]
+
+    # fastmcp (server_remote) drops "additionalProperties": false when it
+    # publishes a schema; extra keys are still refused when the tool runs.
+    assert condition.get("additionalProperties", False) is False
+    assert condition["properties"]["case_insensitive"]["default"] is True
+
+
+async def test_an_undocumented_filter_key_is_refused_before_the_tool_runs(server_module):
+    # parse_where still reads "logic", and it would override "logical".
+    where = [{"field": "Region", "value": "Wales", "logical": "AND", "logic": "OR"}]
+
+    async with Client(server_module.mcp) as client:
+        result = await client.call_tool(
+            "get_rows_fast", {"subject": "S", "select": ["A"], "where": where}, raise_on_error=False
+        )
+
+    assert result.is_error
+    assert "logic" in result.content[0].text
 
 
 def test_every_documented_operator_is_one_mcp_utils_accepts():
