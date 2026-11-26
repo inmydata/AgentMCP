@@ -355,7 +355,10 @@ class mcp_utils:
             return ConditionOperator.Equals
         key = str(op_raw).strip().lower()
         if key not in self._OP_ALIASES:
-            raise UserFacingError(f"Unsupported operator: {op_raw!r}")
+            raise UserFacingError(
+                f"Unsupported operator: {op_raw!r}. Use one of: equals, not_equals, contains, "
+                "not_contains, starts_with, gt, gte, lt, lte."
+            )
         return self._OP_ALIASES[key]
 
     def _normalize_logical_operator(self, logic_raw: Optional[str]) -> LogicalOperator:
@@ -363,7 +366,7 @@ class mcp_utils:
            return LogicalOperator.And
        key = str(logic_raw).strip().upper()
        if key not in self._LOGICAL_ALIASES:
-           raise UserFacingError(f"Unsupported logical operator: {logic_raw!r}")
+           raise UserFacingError(f"Unsupported logical operator: {logic_raw!r}. Use AND or OR.")
        return self._LOGICAL_ALIASES[key]
     
     def is_int(self, s: str) -> bool:
@@ -462,19 +465,35 @@ class mcp_utils:
 
             rows = rows.head(limit)
         return rows, duckdb_path, instance_id
-    
+
+    @staticmethod
+    def _sample_note(sample_rows: int, total_rows: int) -> str:
+        """Tell the caller that data is only a sample and how to reach every row."""
+        return (
+            f"data holds only the first {sample_rows} of {total_rows} rows. Use query_results_fast "
+            f"with this instance_id to read or summarise all {total_rows} rows; do not answer "
+            "from data alone."
+        )
+
     async def get_rows(
         self,
         subject: str,
         select: List[str],
         where: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """
-        Retrieve rows with a simple AND-only filter list.
-        where: [{"field":"Region","op":"equals","value":"North","logical":"AND"}, {"field":"Sales Value","op":"gte","value":1000,"logical":"AND"}]
-        Allowed ops: equals, contains, not_contains, starts_with, gt, lt, gte, lte
-        Allows logical:  AND, OR (default is AND)        
-        Returns records (<= limit) and total_count if available.
+        """Fetch metrics totalled by the selected dimensions, for the get_rows_fast tool.
+
+        Args:
+            subject: Subject name from the schema.
+            select: Dimension and metric names to return.
+            where: Filter dicts read by parse_where. The caller-facing rules
+                (operators, brackets, metric filters) are in
+                tool_descriptions.GET_ROWS_FAST.
+
+        Returns:
+            JSON with row_count, columns, data and instance_id. When the result
+            is larger than the sample, data is a sample, the full result is saved
+            to DuckDB under instance_id, and a note says so.
         """
         try:
             if not self.tenant:
@@ -513,6 +532,8 @@ class mcp_utils:
                 "data": records,
                 "instance_id": instanceid
             }
+            if instanceid:
+                result["note"] = self._sample_note(len(records), total_rows)
 
             logger.info(
                 "get_rows completed (subject=%s, row_count=%d, sample_rows=%d, instance_id=%s)",
@@ -540,6 +561,13 @@ class mcp_utils:
        try:
            if not self.tenant:
                return json.dumps({"error": "Tenant not set"})
+           if n == 0:
+               # The API treats 0 as "bottom 0" and still returns a row, which
+               # would be reported as a ranking. Refuse it instead.
+               return json.dumps({
+                   "error": "n must not be 0. Use a positive n for the top n, "
+                            "or a negative n for the bottom n."
+               })
 
            logger.info(
                "get_top_n called (subject=%s, group_by=%s, order_by=%s, n=%s, where_terms=%d)",
@@ -587,6 +615,8 @@ class mcp_utils:
                "data": records,
                "instance_id": instanceid
            }
+           if instanceid:
+               result["note"] = self._sample_note(len(records), total_rows)
 
            logger.info(
                "get_top_n completed (subject=%s, row_count=%d, sample_rows=%d, instance_id=%s)",

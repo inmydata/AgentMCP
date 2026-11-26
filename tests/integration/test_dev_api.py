@@ -182,6 +182,7 @@ async def test_large_result_is_saved_to_duckdb_and_queryable(mcp_client: Client)
         assert rows["row_count"] == 25
         assert len(rows["data"]) == 10
         assert rows["instance_id"]
+        assert rows["note"].startswith("data holds only the first 10 of 25 rows.")
 
         totals = await call_json(client, "query_results_fast", {
             "instance_id": rows["instance_id"],
@@ -189,3 +190,66 @@ async def test_large_result_is_saved_to_duckdb_and_queryable(mcp_client: Client)
         })
 
     assert totals["data"] == [{"n": 25, "total": pytest.approx(TOTAL_SALES_2024, abs=0.01)}]
+
+
+# --- Behaviour the tool descriptions rely on ----------------------------------
+# tool_descriptions.py tells clients how filters behave. These tests pin that
+# behaviour, so a change in the API shows up here rather than as a wrong answer.
+
+async def test_or_conditions_in_brackets_stay_within_the_other_filters(mcp_client: Client) -> None:
+    async with mcp_client as client:
+        result = await call_json(client, "get_rows_fast", {
+            "subject": SUBJECT,
+            "select": ["Region", "Sales Value"],
+            "where": FY_2024 + [
+                {"field": "Region", "op": "equals", "value": "Wales", "start_group": 1},
+                {"field": "Region", "op": "equals", "value": "Scotland", "logical": "OR", "end_group": 1},
+            ],
+        })
+
+    assert {r["Region"]: r["Sales Value"] for r in result["data"]} == {
+        "Scotland": pytest.approx(7_067_964.24, abs=0.01),
+        "Wales": pytest.approx(8_325_910.79, abs=0.01),
+    }
+
+
+async def test_or_conditions_without_brackets_escape_the_other_filters(mcp_client: Client) -> None:
+    # Why the descriptions insist on brackets: FY2024 AND Wales OR Scotland
+    # means (FY2024 AND Wales) OR Scotland, so Scotland covers every year.
+    async with mcp_client as client:
+        result = await call_json(client, "get_rows_fast", {
+            "subject": SUBJECT,
+            "select": ["Region", "Sales Value"],
+            "where": FY_2024 + [
+                {"field": "Region", "op": "equals", "value": "Wales"},
+                {"field": "Region", "op": "equals", "value": "Scotland", "logical": "OR"},
+            ],
+        })
+
+    by_region = {r["Region"]: r["Sales Value"] for r in result["data"]}
+    assert by_region["Wales"] == pytest.approx(8_325_910.79, abs=0.01)
+    assert by_region["Scotland"] > 7_067_964.24 + 1
+
+
+async def test_a_metric_filter_applies_to_records_before_they_are_totalled(mcp_client: Client) -> None:
+    # Three regions total over 5m in FY2024, but no single record does, so a
+    # filter on the metric removes every record rather than picking regions.
+    async with mcp_client as client:
+        result = await call_json(client, "get_rows_fast", {
+            "subject": SUBJECT,
+            "select": ["Region", "Sales Value"],
+            "where": FY_2024 + [{"field": "Sales Value", "op": "gte", "value": 5_000_000}],
+        })
+
+    assert result["row_count"] == 0
+
+
+async def test_top_n_refuses_zero(mcp_client: Client) -> None:
+    async with mcp_client as client:
+        result = await client.call_tool("get_top_n_fast", {
+            "subject": SUBJECT, "group_by": "Store", "order_by": "Sales Value", "n": 0, "where": FY_2024,
+        })
+
+    assert json.loads(result.content[0].text) == {
+        "error": "n must not be 0. Use a positive n for the top n, or a negative n for the bottom n."
+    }
