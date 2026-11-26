@@ -505,6 +505,21 @@ async def test_upstream_error_detail_goes_to_the_log_not_the_client(configured, 
     )
 
 
+async def test_newlines_in_external_id_and_upstream_detail_stay_on_one_log_line(
+    configured, service, logs
+):
+    service.query_replies = [(403, {"detail": "suspended\nFAKE cid=deadbeef: forged"})]
+    mcp = _server()
+
+    result = await _call(mcp, external_id="acme\nFAKE entry", query="hello")
+
+    correlation_id = result.rsplit(": ", 1)[1].rstrip(")")
+    [line] = [line for line in logs if f"cid={correlation_id}" in line]
+    assert "\n" not in line and "\r" not in line
+    assert "external_id=acme\\nFAKE entry" in line
+    assert "suspended\\nFAKE cid=deadbeef: forged" in line
+
+
 async def test_unreadable_service_reply_is_reported_without_leaking_detail(configured, service):
     service.query_replies = [(200, "<html>not json, internal-host-name</html>")]
     mcp = _server()
