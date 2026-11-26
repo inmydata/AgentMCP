@@ -68,6 +68,7 @@ def server_module(request, monkeypatch):
     """A freshly imported server module (local or remote) with no import side effects."""
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setattr(mcp_logging, "configure_logging", lambda *a, **k: None)
+    monkeypatch.delenv("MCP_DEBUG", raising=False)
     monkeypatch.setenv("INMYDATA_USE_OAUTH", "false")
     for name in ("AGENTIC_RAG_BASE_URL", "AGENTIC_RAG_PSK", "AGENTIC_RAG_DEFAULT_EXTERNAL_ID"):
         monkeypatch.delenv(name, raising=False)
