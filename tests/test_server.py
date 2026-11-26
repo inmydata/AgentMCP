@@ -236,16 +236,16 @@ async def test_get_rows_fast_without_a_filter_passes_an_empty_filter_list(server
     assert fake.last_call("get_rows")[2] == []
 
 
+# Leaving a required argument out entirely is refused by the MCP layer against
+# the tool's schema (see test_tool_descriptions.py); blank values reach the handler.
 @pytest.mark.parametrize(
     "arguments, expected",
     [
-        pytest.param({"select": ["Region"]}, "subject parameter is required", id="no_subject"),
-        pytest.param({"subject": "Sales"}, "select parameter is required", id="no_select"),
         pytest.param({"subject": "", "select": ["Region"]}, "subject parameter is required", id="blank_subject"),
         pytest.param({"subject": "Sales", "select": []}, "select parameter is required", id="empty_select"),
     ],
 )
-async def test_get_rows_fast_rejects_missing_arguments(server, monkeypatch, arguments, expected):
+async def test_get_rows_fast_rejects_blank_arguments(server, monkeypatch, arguments, expected):
     fake = _use(server, monkeypatch)
 
     result = await server.get_rows_fast(**arguments)
@@ -301,12 +301,12 @@ async def test_get_top_n_fast_defaults_to_ten_rows(server, monkeypatch):
 @pytest.mark.parametrize(
     "arguments, expected",
     [
-        pytest.param({"group_by": "Region", "order_by": "Profit"}, "subject parameter is required", id="no_subject"),
-        pytest.param({"subject": "Sales", "order_by": "Profit"}, "group_by parameter is required", id="no_group_by"),
-        pytest.param({"subject": "Sales", "group_by": "Region"}, "order_by parameter is required", id="no_order_by"),
+        pytest.param({"subject": "", "group_by": "Region", "order_by": "Profit"}, "subject parameter is required", id="blank_subject"),
+        pytest.param({"subject": "Sales", "group_by": "", "order_by": "Profit"}, "group_by parameter is required", id="blank_group_by"),
+        pytest.param({"subject": "Sales", "group_by": "Region", "order_by": ""}, "order_by parameter is required", id="blank_order_by"),
     ],
 )
-async def test_get_top_n_fast_rejects_missing_arguments(server, monkeypatch, arguments, expected):
+async def test_get_top_n_fast_rejects_blank_arguments(server, monkeypatch, arguments, expected):
     fake = _use(server, monkeypatch)
 
     result = await server.get_top_n_fast(**arguments)
@@ -345,11 +345,11 @@ async def test_query_results_fast_returns_what_the_data_layer_returns(server, mo
 @pytest.mark.parametrize(
     "arguments, expected",
     [
-        pytest.param({"sql": "SELECT 1"}, "instance_id parameter is required", id="no_instance_id"),
-        pytest.param({"instance_id": "abc"}, "sql parameter is required", id="no_sql"),
+        pytest.param({"instance_id": "", "sql": "SELECT 1"}, "instance_id parameter is required", id="blank_instance_id"),
+        pytest.param({"instance_id": "abc", "sql": ""}, "sql parameter is required", id="blank_sql"),
     ],
 )
-async def test_query_results_fast_rejects_missing_arguments(server, monkeypatch, arguments, expected):
+async def test_query_results_fast_rejects_blank_arguments(server, monkeypatch, arguments, expected):
     fake = _use(server, monkeypatch)
 
     result = await server.query_results_fast(**arguments)

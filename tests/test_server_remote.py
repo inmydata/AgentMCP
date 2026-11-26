@@ -1066,42 +1066,85 @@ class TestLegacyCredentials:
 
 class TestToolArgumentChecks:
     @pytest.mark.parametrize(
+        ("tool", "arguments", "missing"),
+        [
+            pytest.param("get_rows_fast", {"select": ["Region"]}, "subject", id="rows-no-subject"),
+            pytest.param("get_rows_fast", {"subject": "Sales"}, "select", id="rows-no-select"),
+            pytest.param(
+                "get_top_n_fast", {"group_by": "Region", "order_by": "Revenue"}, "subject", id="top-n-no-subject"
+            ),
+            pytest.param(
+                "get_top_n_fast", {"subject": "Sales", "order_by": "Revenue"}, "group_by", id="top-n-no-group-by"
+            ),
+            pytest.param(
+                "get_top_n_fast", {"subject": "Sales", "group_by": "Region"}, "order_by", id="top-n-no-order-by"
+            ),
+            pytest.param("query_results_fast", {"sql": "SELECT 1"}, "instance_id", id="query-no-instance"),
+            pytest.param("query_results_fast", {"instance_id": "abc"}, "sql", id="query-no-sql"),
+            pytest.param("get_answer_slow", {}, "question", id="answer-no-question"),
+        ],
+    )
+    async def test_missing_required_argument_is_named_by_the_mcp_layer(
+        self, legacy_server, tool, arguments, missing
+    ):
+        # Arrange: any platform call would show up as a different reply
+        legacy_server.utils.failure = AssertionError("platform layer must not be reached")
+
+        # Act
+        async with legacy_server.running() as call:
+            reply = await call(tool, arguments, headers={"x-inmydata-tenant": "acme"})
+
+        # Assert
+        assert reply.text == f"Input validation error: '{missing}' is a required property"
+
+    @pytest.mark.parametrize(
         ("tool", "arguments", "expected_error"),
         [
-            pytest.param("get_rows_fast", {}, "subject parameter is required", id="rows-no-subject"),
             pytest.param(
-                "get_rows_fast", {"subject": "Sales"}, "select parameter is required (list of field names)", id="rows-no-select"
+                "get_rows_fast", {"subject": "", "select": ["Region"]}, "subject parameter is required", id="rows-blank-subject"
             ),
             pytest.param(
-                "get_top_n_fast", {}, "subject parameter is required", id="top-n-no-subject"
+                "get_rows_fast",
+                {"subject": "Sales", "select": []},
+                "select parameter is required (list of field names)",
+                id="rows-empty-select",
             ),
             pytest.param(
                 "get_top_n_fast",
-                {"subject": "Sales"},
+                {"subject": "", "group_by": "Region", "order_by": "Revenue"},
+                "subject parameter is required",
+                id="top-n-blank-subject",
+            ),
+            pytest.param(
+                "get_top_n_fast",
+                {"subject": "Sales", "group_by": "", "order_by": "Revenue"},
                 "group_by parameter is required",
-                id="top-n-no-group-by",
+                id="top-n-blank-group-by",
             ),
             pytest.param(
                 "get_top_n_fast",
-                {"subject": "Sales", "group_by": "Region"},
+                {"subject": "Sales", "group_by": "Region", "order_by": ""},
                 "order_by parameter is required",
-                id="top-n-no-order-by",
-            ),
-            pytest.param(
-                "query_results_fast", {}, "instance_id parameter is required", id="query-no-instance"
+                id="top-n-blank-order-by",
             ),
             pytest.param(
                 "query_results_fast",
-                {"instance_id": "abc"},
-                "sql parameter is required",
-                id="query-no-sql",
+                {"instance_id": "", "sql": "SELECT 1"},
+                "instance_id parameter is required",
+                id="query-blank-instance",
             ),
             pytest.param(
-                "get_answer_slow", {}, "question parameter is required", id="answer-no-question"
+                "query_results_fast",
+                {"instance_id": "abc", "sql": ""},
+                "sql parameter is required",
+                id="query-blank-sql",
+            ),
+            pytest.param(
+                "get_answer_slow", {"question": ""}, "question parameter is required", id="answer-blank-question"
             ),
         ],
     )
-    async def test_missing_required_argument_gets_a_clear_error(
+    async def test_blank_required_argument_gets_a_clear_error(
         self, legacy_server, tool, arguments, expected_error
     ):
         # Arrange: any platform call would show up as a different reply
@@ -1227,7 +1270,7 @@ class TestToolsDelegateToThePlatformLayer:
             pytest.param({}, id="none-given"),
             pytest.param({"financial_year": 2020, "period_type": "week"}, id="period-number-missing"),
             pytest.param(
-                {"financial_year": 2025, "period_number": 0, "period_type": ""},
+                {"financial_year": 2025, "period_number": 0},
                 id="invalid-values-left-to-mcp_utils",
             ),
         ],
@@ -1247,6 +1290,20 @@ class TestToolsDelegateToThePlatformLayer:
         # Assert
         assert reply.json["method"] == "get_calendar_period_date_range"
         assert reply.json["args"] == expected
+
+    async def test_calendar_range_refuses_an_unknown_period_type_and_lists_the_allowed_ones(
+        self, legacy_server
+    ):
+        # Act
+        async with legacy_server.running() as call:
+            reply = await call(
+                "get_calendar_period_date_range", {"period_type": "decade"}, headers=self.TENANT
+            )
+
+        # Assert
+        assert reply.text == (
+            "Input validation error: 'decade' is not one of ['year', 'quarter', 'month', 'week']"
+        )
 
 
 # ---------------------------------------------------------------------------

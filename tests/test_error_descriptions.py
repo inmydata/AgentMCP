@@ -31,6 +31,7 @@ from inmydata.exceptions import (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from errors import (  # noqa: E402
+    _SCHEMA_HINT,
     MAX_API_MESSAGE_CHARS,
     describe_error,
     tool_error_message,
@@ -84,6 +85,22 @@ class TestClientErrorsPassOnTheApiMessage:
 
         assert message.startswith(f"The inmydata API rejected the request (HTTP 400): {self.FIELD_MESSAGE}")
         assert "Call get_schema" in message
+
+    @pytest.mark.parametrize("context", ["get_rows", "get_top_n", "get_rows_fast", "get_top_n_fast"])
+    def test_400_from_a_data_tool_without_a_message_adds_the_get_schema_hint(self, context):
+        message = describe_error(sdk_error(InmydataAPIError, 400, ""), context=context)
+
+        assert message == "The inmydata API rejected the request (HTTP 400)." + _SCHEMA_HINT
+
+    def test_400_from_a_data_tool_about_something_other_than_names_has_no_hint(self):
+        size_message = (
+            "The data requested is more than 50MB (61234567 bytes). "
+            "Try a smaller dataset by adding filters or removing fields."
+        )
+
+        message = describe_error(sdk_error(InmydataAPIError, 400, size_message), context="get_rows_fast")
+
+        assert message == f"The inmydata API rejected the request (HTTP 400): {size_message}"
 
     def test_400_from_other_tools_has_no_get_schema_hint(self):
         message = describe_error(

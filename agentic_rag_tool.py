@@ -32,11 +32,18 @@ _log = logging.getLogger("agentic_rag")
 
 
 _DESCRIPTION = (
-    "Query the tenant's Agentic RAG knowledge base with a natural-language "
-    "question. Returns an answer grounded in the ingested documents plus the "
-    "source chunks used. Use this when the user asks about information that "
-    "would live in the tenant's knowledge base. Do not use for live data, "
-    "general world knowledge, or anything outside the ingested corpus."
+    "Answer a question from the tenant's knowledge base: the documents the tenant has "
+    "added to inmydata's Agentic RAG service. Use it for questions about what those "
+    "documents say. Do not use it for figures from the tenant's data (use get_rows_fast "
+    "or get_top_n_fast) or for general knowledge.\n\n"
+    "The reply is text, not JSON: the answer in <answer> tags, the document sections it "
+    "was based on in <sources>, and a <session_id>. To ask a follow-up that depends on "
+    "the earlier answer, pass that session_id back. If the reply starts with 'error:', "
+    "the question was not answered."
+)
+
+_UNAVAILABLE_DESCRIPTION = (
+    "Query the tenant's Agentic RAG knowledge base (currently unavailable: see server logs)."
 )
 
 
@@ -45,7 +52,27 @@ QueryArg = Annotated[
     Field(
         min_length=1,
         max_length=10000,
-        description="The natural-language question to answer from the tenant's knowledge base.",
+        description="The question, in plain English, to answer from the tenant's knowledge base.",
+    ),
+]
+
+SessionIdArg = Annotated[
+    Optional[str],
+    Field(
+        description=(
+            "Leave out for a new question. For a follow-up, pass the session_id from the "
+            "earlier answer's <session_id> tag."
+        ),
+    ),
+]
+
+ExternalIdArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Identifier of the knowledge base to query, as given by whoever set up this "
+            "server. Do not guess it."
+        ),
     ),
 ]
 
@@ -137,18 +164,12 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
         return _format(result)
 
     if tenant_resolver is not None:
-        @mcp.tool()
+        @mcp.tool(description=_DESCRIPTION)
         async def agentic_rag_query(
             query: QueryArg,
-            session_id: Optional[str] = None,
+            session_id: SessionIdArg = None,
         ) -> str:
-            """Query the tenant's Agentic RAG knowledge base with a natural-language question.
-
-            Returns an answer grounded in the ingested documents plus the source
-            chunks used. Use this when the user asks about information that would
-            live in the tenant's knowledge base. Do not use for live data,
-            general world knowledge, or anything outside the ingested corpus.
-            """
+            """Answer from the knowledge base of the tenant named in the caller's token."""
             try:
                 external_id = await _resolve_tenant(tenant_resolver)
             except AgenticRagError as exc:
@@ -161,36 +182,21 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
     elif default_eid:
         resolved_eid = default_eid
 
-        @mcp.tool()
+        @mcp.tool(description=_DESCRIPTION)
         async def agentic_rag_query(
             query: QueryArg,
-            session_id: Optional[str] = None,
+            session_id: SessionIdArg = None,
         ) -> str:
-            """Query the tenant's Agentic RAG knowledge base with a natural-language question.
-
-            Returns an answer grounded in the ingested documents plus the source
-            chunks used. Use this when the user asks about information that would
-            live in the tenant's knowledge base. Do not use for live data,
-            general world knowledge, or anything outside the ingested corpus.
-            """
+            """Answer from the knowledge base set in AGENTIC_RAG_DEFAULT_EXTERNAL_ID."""
             return await _run(resolved_eid, query, session_id)
     else:
-        @mcp.tool()
+        @mcp.tool(description=_DESCRIPTION)
         async def agentic_rag_query(
-            external_id: str,
+            external_id: ExternalIdArg,
             query: QueryArg,
-            session_id: Optional[str] = None,
+            session_id: SessionIdArg = None,
         ) -> str:
-            """Query the tenant's Agentic RAG knowledge base with a natural-language question.
-
-            Returns an answer grounded in the ingested documents plus the source
-            chunks used. Use this when the user asks about information that would
-            live in the tenant's knowledge base. Do not use for live data,
-            general world knowledge, or anything outside the ingested corpus.
-
-            Args:
-                external_id: Stable identifier for the tenant whose knowledge base should be queried.
-            """
+            """Answer from the knowledge base the caller names in external_id."""
             if not external_id:
                 return "error: external_id is required"
             return await _run(external_id, query, session_id)
@@ -199,19 +205,19 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
 def _register_stub(mcp, err_msg: str, *, use_oauth: bool, has_default: bool) -> None:
     """Register a placeholder that always returns a misconfiguration error."""
     if use_oauth or has_default:
-        @mcp.tool()
+        @mcp.tool(description=_UNAVAILABLE_DESCRIPTION)
         async def agentic_rag_query(
             query: QueryArg,
-            session_id: Optional[str] = None,
+            session_id: SessionIdArg = None,
         ) -> str:
-            """Query the tenant's Agentic RAG knowledge base (currently unavailable: see server logs)."""
+            """Return the misconfiguration error; the RAG service is not configured."""
             return err_msg
     else:
-        @mcp.tool()
+        @mcp.tool(description=_UNAVAILABLE_DESCRIPTION)
         async def agentic_rag_query(
-            external_id: str,
+            external_id: ExternalIdArg,
             query: QueryArg,
-            session_id: Optional[str] = None,
+            session_id: SessionIdArg = None,
         ) -> str:
-            """Query the tenant's Agentic RAG knowledge base (currently unavailable: see server logs)."""
+            """Return the misconfiguration error; the RAG service is not configured."""
             return err_msg

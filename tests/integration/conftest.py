@@ -105,17 +105,20 @@ def dev_api(request: pytest.FixtureRequest) -> DevApiSettings:
 def _clean_env() -> dict[str, str]:
     """Copy of this process's environment without any inmydata settings.
 
-    Removes ``INMYDATA_*``, ``AGENTIC_RAG_*``, ``MCP_DEBUG`` and any
-    ``<TENANT>_API_KEY`` (the remote server prefers that over the header), so
-    only the test settings reach the servers.
+    Removes ``INMYDATA_*``, ``AGENTIC_RAG_*``, ``MCP_DEBUG``, ``MCP_SAMPLE_ROWS``
+    and any ``<TENANT>_API_KEY`` (the remote server prefers that over the header),
+    so only the test settings reach the servers. Sets ``NO_PROXY`` so the servers
+    call the API directly rather than through any proxy configured on this machine.
     """
-    return {
+    env = {
         k: v
         for k, v in os.environ.items()
         if not k.upper().startswith(("INMYDATA_", "AGENTIC_RAG_"))
         and not k.upper().endswith("_API_KEY")
-        and k.upper() not in ("MCP_DEBUG", "MCP_SAMPLE_ROWS")
+        and k.upper() not in ("MCP_DEBUG", "MCP_SAMPLE_ROWS")
     }
+    env["NO_PROXY"] = env["no_proxy"] = "*"
+    return env
 
 
 @pytest.fixture(scope="session")

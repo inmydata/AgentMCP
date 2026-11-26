@@ -49,7 +49,10 @@ INTERNAL_ERROR = "internal error"
 # Longest API-written message passed on to the caller.
 MAX_API_MESSAGE_CHARS = 300
 
-# Tools whose 400 responses are almost always a wrong subject or field name.
+# Tools whose 400 responses are usually a wrong subject or field name. The hint
+# is added only when the API's message says a name was not found, or when there
+# is no message to go on: other 400s (such as the 50 MB export limit) say how
+# to correct them, and the hint would send the caller off to check names.
 _SCHEMA_HINT_CONTEXTS = frozenset({"get_rows", "get_top_n", "get_rows_fast", "get_top_n_fast"})
 _SCHEMA_HINT = (
     " Call get_schema to see the subjects and field names available; names must "
@@ -152,7 +155,8 @@ def describe_error(exc: BaseException, *, context: str) -> Optional[str]:
             message = f"The inmydata API rejected the request (HTTP {status}): {api_text}"
         else:
             message = f"The inmydata API rejected the request (HTTP {status})."
-        if status == 400 and context in _SCHEMA_HINT_CONTEXTS:
+        names_problem = not api_text or "not found" in api_text.lower()
+        if status == 400 and context in _SCHEMA_HINT_CONTEXTS and names_problem:
             message += _SCHEMA_HINT
         return message
     if isinstance(exc, requests.Timeout):

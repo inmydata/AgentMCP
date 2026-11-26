@@ -481,6 +481,14 @@ class TestGetRows:
         assert len(out["data"]) == 3
         assert uuid.UUID(out["instance_id"])  # a real uuid
         assert list(duckdb_dir.glob("*/" + out["instance_id"] + ".duckdb"))
+        assert out["note"].startswith("data holds only the first 3 of 8 rows. Use query_results_fast")
+
+    async def test_complete_result_has_no_sample_note(self, utils_instance, fake_driver, duckdb_dir):
+        fake_driver.result = pd.DataFrame({"a": [1, 2]})
+
+        out = json.loads(await utils_instance.get_rows("S", ["a"]))
+
+        assert "note" not in out
 
     async def test_missing_tenant_returns_error_without_calling_driver(self, fake_driver):
         u = mcp_utils("k", "", "c", "u", "s", None)
@@ -556,6 +564,16 @@ class TestGetTopN:
         assert out["row_count"] == 6
         assert len(out["data"]) == 2
         assert list(duckdb_dir.glob("*/" + out["instance_id"] + ".duckdb"))
+        assert out["note"].startswith("data holds only the first 2 of 6 rows. Use query_results_fast")
+
+    async def test_zero_n_is_refused_without_calling_driver(self, utils_instance, fake_driver):
+        # The API answers n=0 with a row, which would be reported as a ranking.
+        out = json.loads(await utils_instance.get_top_n("S", "Person", "Sales", 0))
+
+        assert out == {
+            "error": "n must not be 0. Use a positive n for the top n, or a negative n for the bottom n."
+        }
+        assert fake_driver.calls == []
 
     async def test_missing_tenant_returns_error(self, fake_driver):
         u = mcp_utils("k", "", "c", "u", "s", None)
