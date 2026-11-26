@@ -16,6 +16,7 @@ import asyncio
 import inspect
 import logging
 import os
+import uuid
 from typing import Annotated, Any, Callable, Optional
 
 from pydantic import Field
@@ -26,9 +27,10 @@ from agentic_rag_client import (
     KeyLimitExhausted,
 )
 from errors import log_tool_error
+from mcp_logging import logger as agentmcp_logger
 
 
-_log = logging.getLogger("agentic_rag")
+_log = logging.getLogger("agentmcp.agentic_rag")
 
 
 _DESCRIPTION = (
@@ -138,10 +140,9 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
             "agentic_rag not configured (missing AGENTIC_RAG_BASE_URL and/or AGENTIC_RAG_PSK); "
             "tool will be registered but will return an error on every call"
         )
-        err_msg = (
-            "error: agentic_rag not configured "
-            "(missing AGENTIC_RAG_BASE_URL and/or AGENTIC_RAG_PSK)"
-        )
+        # The client only needs to know the tool is unavailable; the names of the
+        # missing settings are for the operator and stay in the log line above.
+        err_msg = "error: agentic_rag not configured"
         _register_stub(mcp, err_msg, use_oauth=use_oauth, has_default=bool(default_eid))
         return
 
@@ -150,14 +151,16 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
     async def _run(external_id: str, query_text: str, session_id: Optional[str]) -> str:
         try:
             result = await client.query(external_id, query_text, session_id)
-        except KeyLimitExhausted as exc:
-            _log.error(
-                "agentic_rag key-limit exhausted for external_id=%s", external_id
-            )
-            return f"error: {exc}"
         except AgenticRagError as exc:
-            _log.error("agentic_rag error for external_id=%s: %s", external_id, exc)
-            return f"error: {exc}"
+            # The client gets the short message and an id; the detail (upstream
+            # text, connection errors) stays in the log under that id.
+            cid = uuid.uuid4().hex[:8]
+            kind = "key-limit exhausted" if isinstance(exc, KeyLimitExhausted) else "error"
+            agentmcp_logger.error(
+                "tool error in agentic_rag_query (cid=%s): %s for external_id=%s: %s | detail: %s",
+                cid, kind, external_id, exc, exc.detail or "-",
+            )
+            return f"error: {exc} (correlation_id: {cid})"
         except Exception as exc:
             cid = log_tool_error(exc, context="agentic_rag_query")
             return f"error: internal error (correlation_id: {cid})"

@@ -5,6 +5,9 @@ from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP, Context
+from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import Middleware
+import pydantic
 from fastapi import FastAPI
 from mcp_utils import mcp_utils
 from fastmcp.server.dependencies import get_http_headers, get_http_request
@@ -31,6 +34,18 @@ INMYDATA_MCP_HOST = os.environ.get('INMYDATA_MCP_HOST', 'mcp.inmydata.com')
 INMYDATA_SERVER = os.environ.get('INMYDATA_SERVER', 'inmydata.com')
 INMYDATA_AUTH_SERVER = os.environ.get('INMYDATA_AUTH_SERVER', 'auth.'+INMYDATA_SERVER)
 INMYDATA_USE_OAUTH = os.environ.get('INMYDATA_USE_OAUTH', 'false').lower() == 'true'
+# Without OAuth, each caller chooses the tenant, the inmydata server and, through
+# {TENANT}_API_KEY, which of this server's API keys is used; it also chooses the
+# Agentic RAG tenant. That is only acceptable on a developer's own machine, so
+# the server refuses to start that way unless it is explicitly allowed.
+INMYDATA_ALLOW_LEGACY_AUTH = os.environ.get('INMYDATA_ALLOW_LEGACY_AUTH', 'false').lower() == 'true'
+if not INMYDATA_USE_OAUTH and not INMYDATA_ALLOW_LEGACY_AUTH:
+    _refusal = (
+        "server_remote.py will not start without OAuth. Set INMYDATA_USE_OAUTH=true, "
+        "or, for local testing only, INMYDATA_ALLOW_LEGACY_AUTH=true."
+    )
+    logger.critical(_refusal)
+    raise RuntimeError(_refusal)
 # Must match the auth server's own issuer exactly, with no trailing slash.
 # Clients compare the `iss` on the authorization response (RFC 9207) and the
 # advertised issuer (RFC 8414) by exact string match, and Duende sends
@@ -66,6 +81,31 @@ auth = PATSupportingRemoteAuthProvider(
     #allowed_client_redirect_uris=["http://localhost:*", "http://127.0.0.1:*","https://chatgpt.com/connector_platform_oauth_redirect", "https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]
 )
 
+class ArgumentErrorMiddleware(Middleware):
+    """Pass argument errors on to the caller although tool errors are masked.
+
+    With ``mask_error_details=True``, FastMCP hides the text of any exception a
+    tool raises. That includes pydantic's check of the call's arguments (for
+    example an unknown key in a ``where`` filter), which the caller needs in
+    order to correct the call. This restores those messages, listing only each
+    argument's location and the problem, not the value that was sent.
+    """
+
+    async def on_call_tool(self, context, call_next):
+        try:
+            return await call_next(context)
+        except ToolError as exc:
+            cause = exc.__cause__
+            tool = context.message.name
+            if isinstance(cause, pydantic.ValidationError) and cause.title == f"call[{tool}]":
+                problems = "; ".join(
+                    f"{'.'.join(map(str, err['loc'])) or 'arguments'}: {err['msg']}"
+                    for err in cause.errors()
+                )
+                raise ToolError(f"Error calling tool {tool!r}: invalid arguments: {problems}") from cause
+            raise
+
+
 class MCPPathRewriteMiddleware:
     def __init__(self, app):
         self.app = app
@@ -81,7 +121,16 @@ class MCPPathRewriteMiddleware:
 
 if INMYDATA_USE_OAUTH:
     # Initialise FastMCP, and mount to FastAPI app that provides custom auth endpoints
-    mcp = FastMCP(name="inmydata-agent-server", instructions=docs.SERVER_INSTRUCTIONS, auth=auth)
+    # mask_error_details: if a tool ever lets an exception escape, the caller
+    # gets "Error calling tool '<name>'" instead of the exception's text.
+    # ArgumentErrorMiddleware still passes on what was wrong with the arguments.
+    mcp = FastMCP(
+        name="inmydata-agent-server",
+        instructions=docs.SERVER_INSTRUCTIONS,
+        auth=auth,
+        mask_error_details=True,
+        middleware=[ArgumentErrorMiddleware()],
+    )
     mcp_app = mcp.http_app("/")
     #mcp_app.add_middleware(MCPPathRewriteMiddleware)
 
@@ -169,7 +218,12 @@ if INMYDATA_USE_OAUTH:
     app.mount("/mcp", mcp_app)
 else:
     # Initialise FastMCP without auth
-    mcp = FastMCP(name="inmydata-agent-server", instructions=docs.SERVER_INSTRUCTIONS)
+    mcp = FastMCP(
+        name="inmydata-agent-server",
+        instructions=docs.SERVER_INSTRUCTIONS,
+        mask_error_details=True,
+        middleware=[ArgumentErrorMiddleware()],
+    )
 
 async def get_user(token: str) -> str:
     access_token = await token_verifier.verify_token(token)

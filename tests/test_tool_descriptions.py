@@ -70,6 +70,8 @@ def server_module(request, monkeypatch):
     monkeypatch.setattr(mcp_logging, "configure_logging", lambda *a, **k: None)
     monkeypatch.delenv("MCP_DEBUG", raising=False)
     monkeypatch.setenv("INMYDATA_USE_OAUTH", "false")
+    # server_remote.py refuses to start without OAuth unless this is set.
+    monkeypatch.setenv("INMYDATA_ALLOW_LEGACY_AUTH", "true")
     for name in ("AGENTIC_RAG_BASE_URL", "AGENTIC_RAG_PSK", "AGENTIC_RAG_DEFAULT_EXTERNAL_ID"):
         monkeypatch.delenv(name, raising=False)
     sys.modules.pop(request.param, None)

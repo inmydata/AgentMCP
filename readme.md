@@ -47,10 +47,12 @@ Required environment variables (see `.env.example`):
 
 ### Remote Server Additional Configuration
 
-- `INMYDATA_USE_OAUTH` (optional) - Set to `true` to enable OAuth authentication, or `false`/unset for legacy API key authentication (default: false)
+- `INMYDATA_USE_OAUTH` - Set to `true` to enable OAuth authentication. Deployed servers must set this. If it is `false` or unset, the server uses legacy API key authentication and refuses to start unless `INMYDATA_ALLOW_LEGACY_AUTH` is also `true`
+- `INMYDATA_ALLOW_LEGACY_AUTH` (local testing only) - Set to `true` to let the server start with OAuth off. Never set it in a deployed environment; see [Legacy API Key Authentication](#legacy-api-key-authentication-inmydata_use_oauthfalse-local-testing-only)
 - `INMYDATA_MCP_HOST` (optional) - MCP server host (default: mcp.inmydata.ai)
 - `INMYDATA_AUTH_SERVER` (optional) - OAuth authorization server URL (default: https://auth.inmydata.com)
 - `INMYDATA_SERVER` (optional) - inmydata server (default: inmydata.com)
+- `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` (optional, local development only) - CA bundle for outgoing HTTPS calls. Needed when the auth server or the inmydata API runs locally with an mkcert certificate; see [Using a local auth server](#using-a-local-auth-server-mkcert-certificates)
 
 ## Usage
 
@@ -102,7 +104,46 @@ When OAuth is enabled, the server uses bearer token authentication:
 
 The tenant is automatically extracted from the token's `client_imd_tenant` or `imd_tenant` claim.
 
-##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false or unset - default)
+##### Using a local auth server (mkcert certificates)
+
+If `INMYDATA_AUTH_SERVER` or the inmydata API points at a server running on your own machine (for example `auth-dev.inmydata.com` or `dev.inmydata.com` mapped to `127.0.0.1` in your `hosts` file), that server will usually use a certificate made by [mkcert](https://github.com/FiloSottile/mkcert).
+
+`mkcert -install` makes Windows and your browsers trust that certificate, but Python does not. Python's HTTP libraries check certificates against their own `certifi` bundle, which does not contain the mkcert root CA. Without the fix below:
+
+- `POST /connect/token` returns **500**, because the token proxy cannot connect to the auth server (`CERTIFICATE_VERIFY_FAILED` in the server log). MCP clients such as ChatGPT fail to sign in.
+- Token checks on `/mcp` fail in the same way, because the signing keys (JWKS) are also downloaded from the auth server.
+- Tool calls fail with `requests.exceptions.SSLError ... CERTIFICATE_VERIFY_FAILED`, because the inmydata SDK cannot connect to the local API.
+
+To fix it, give Python a CA bundle that contains both the normal `certifi` certificates and your mkcert root CA:
+
+```bash
+# Git Bash; run from the repository root
+mkdir -p "$USERPROFILE/.certs"
+B="$USERPROFILE/.certs/certifi-plus-mkcert.pem"
+cat "$(.venv/Scripts/python -c 'import certifi; print(certifi.where())')" > "$B"
+echo >> "$B"
+cat "$(mkcert -CAROOT)/rootCA.pem" >> "$B"
+```
+
+Then add both of these to `.env`, pointing at the same file:
+
+```
+SSL_CERT_FILE=C:\Users\<you>\.certs\certifi-plus-mkcert.pem
+REQUESTS_CA_BUNDLE=C:\Users\<you>\.certs\certifi-plus-mkcert.pem
+```
+
+Two settings are needed because two HTTP libraries are in use. `httpx` (the token proxy and JWKS downloads) reads `SSL_CERT_FILE`. `requests` (the inmydata SDK) ignores `SSL_CERT_FILE` and reads `REQUESTS_CA_BUNDLE`.
+
+Notes:
+
+- The bundle must contain both sets of certificates. A file with only the mkcert root CA would stop calls to real servers, such as `auth.inmydata.com`, from working.
+- Keep the file outside the repository.
+- It is a copy, so rebuild it if you upgrade `certifi` or regenerate your mkcert CA.
+- This is for local development only. Do not set either setting in deployed environments.
+
+##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false, local testing only)
+
+Do not deploy the server in this mode. Without OAuth, each caller chooses the tenant and the inmydata server, and can make the server use an API key from its own environment (see "Environment Variable Lookup" below). The server refuses to start this way unless `INMYDATA_ALLOW_LEGACY_AUTH=true` is also set.
 
 When OAuth is disabled, the server uses traditional API key authentication:
 

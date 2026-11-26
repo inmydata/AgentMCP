@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from inmydata.CalendarAssistant import FinancialPeriodDetails  # noqa: E402
-from mcp_utils import _tenant_namespace, mcp_utils  # noqa: E402
+from mcp_utils import MAX_PROGRESS_MESSAGE_CHARS, _tenant_namespace, mcp_utils  # noqa: E402
 
 TEST_TENANT = "test"
 SECRET_TEXT = "SECRET-internal-detail"
@@ -458,6 +458,31 @@ class TestGetAnswer:
         assert (1, "Thinking") in ctx.progress
         assert (2, "Fetching data") in ctx.progress
         assert ctx.progress[-1][0] == 3
+
+    async def test_status_updates_are_passed_on_as_one_line(self, utils_instance, monkeypatch):
+        # Arrange
+        ctx = FakeContext()
+        update = "Failed:\n  File \"C:\\svc\\worker.py\", line 9\r\n\tKeyError"
+        _install_conversational_driver(monkeypatch, updates=(update,))
+
+        # Act
+        await utils_instance.get_answer("How many stores?", ctx=ctx)
+
+        # Assert
+        assert (1, 'Failed: File "C:\\svc\\worker.py", line 9 KeyError') in ctx.progress
+
+    async def test_long_status_updates_are_cut_short(self, utils_instance, monkeypatch):
+        # Arrange
+        ctx = FakeContext()
+        _install_conversational_driver(monkeypatch, updates=("x" * 1000,))
+
+        # Act
+        await utils_instance.get_answer("How many stores?", ctx=ctx)
+
+        # Assert
+        message = ctx.progress[1][1]
+        assert len(message) == MAX_PROGRESS_MESSAGE_CHARS
+        assert message.endswith("...")
 
     async def test_status_updates_do_not_need_a_context(self, utils_instance, monkeypatch):
         # Arrange

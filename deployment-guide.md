@@ -123,7 +123,9 @@ Supplementary headers still honored in this mode:
 
 > **Behaviour change (GHSA / issue #7 hardening):** Earlier versions preferred the `x-inmydata-tenant` / `x-inmydata-user` headers over the token claims. These headers are no longer read under token-based auth — sending them has no effect. Update any client that relied on them to override identity.
 
-#### API-key auth (no OAuth)
+#### API-key auth (no OAuth) — local testing only
+
+Do not deploy the server in this mode. Without OAuth, each caller chooses the tenant and the inmydata server, and can make the server use an API key from its own environment (`{TENANT}_API_KEY`). The server therefore refuses to start with OAuth off unless `INMYDATA_ALLOW_LEGACY_AUTH=true` is also set. Set that only on your own machine.
 
 When OAuth is disabled, clients pass credentials via headers:
 

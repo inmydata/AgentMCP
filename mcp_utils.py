@@ -16,7 +16,10 @@ from mcp.server.fastmcp import Context
 import asyncio
 
 from mcp_logging import log_field, logger
-from errors import UserFacingError, tool_error_message, tool_error_response
+from errors import UserFacingError, clean_upstream_text, tool_error_message, tool_error_response
+
+# Longest status message from the question service passed on as progress.
+MAX_PROGRESS_MESSAGE_CHARS = 200
 
 
 class InvalidInstanceId(Exception):
@@ -740,10 +743,17 @@ class mcp_utils:
             def on_ai_question_update(caller, message):
                 nonlocal progress_counter
                 progress_counter += 1
+                # The status text is written by the question service, not by us,
+                # so it goes to the caller only as one short line. The original
+                # stays in the debug log.
+                logger.debug("get_answer status update %d: %s", progress_counter, log_field(message))
                 if ctx:
                     # schedule the coroutine onto the captured loop, thread-safely
                     fut = asyncio.run_coroutine_threadsafe(
-                        ctx.report_progress(progress=progress_counter, message=message),
+                        ctx.report_progress(
+                            progress=progress_counter,
+                            message=clean_upstream_text(message, MAX_PROGRESS_MESSAGE_CHARS),
+                        ),
                         loop
                     )
 

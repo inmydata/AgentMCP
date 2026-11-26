@@ -215,6 +215,20 @@ async def test_unconfigured_tool_returns_a_configuration_error():
     assert result.startswith("error: agentic_rag not configured")
 
 
+async def test_unconfigured_tool_does_not_name_the_missing_settings_to_the_client():
+    mcp = _server()
+
+    result = await _call(mcp, external_id="acme", query="hello")
+
+    assert "AGENTIC_RAG" not in result
+
+
+def test_missing_configuration_is_reported_on_the_agentmcp_log(logs):
+    _server()
+
+    assert any("agentic_rag not configured" in line for line in logs)
+
+
 async def test_unconfigured_tool_with_a_default_tenant_does_not_ask_for_external_id(monkeypatch):
     monkeypatch.setenv("AGENTIC_RAG_DEFAULT_EXTERNAL_ID", "acme")
     mcp = _server()
@@ -462,7 +476,8 @@ async def test_exhausted_key_pool_is_returned_as_an_error_string(configured, ser
 
     result = await _call(mcp, external_id="acme", query="hello")
 
-    assert result.startswith("error: tenant key pool exhausted")
+    assert result.startswith("error: the knowledge base is not available at the moment")
+    assert "keys" not in result
 
 
 async def test_service_outage_is_returned_as_an_error_string(configured, service):
@@ -471,7 +486,23 @@ async def test_service_outage_is_returned_as_an_error_string(configured, service
 
     result = await _call(mcp, external_id="acme", query="hello")
 
-    assert result == "error: HTTP 503"
+    assert result.startswith(
+        "error: the knowledge base service failed to process the request (HTTP 503). "
+        "Try again (correlation_id: "
+    )
+
+
+async def test_upstream_error_detail_goes_to_the_log_not_the_client(configured, service, logs):
+    service.query_replies = [(403, {"detail": "tenant suspended by internal-billing"})]
+    mcp = _server()
+
+    result = await _call(mcp, external_id="acme", query="hello")
+
+    assert "internal-billing" not in result
+    correlation_id = result.rsplit(": ", 1)[1].rstrip(")")
+    assert any(
+        f"cid={correlation_id}" in line and "internal-billing" in line for line in logs
+    )
 
 
 async def test_unreadable_service_reply_is_reported_without_leaking_detail(configured, service):
