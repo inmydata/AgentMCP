@@ -52,8 +52,10 @@ Use get_answer_slow only for questions that need an explanation rather than figu
 The data and calendar tools return JSON. If one fails, the result is {"error": "..."},
 sometimes with a correlation_id. agentic_rag_query returns plain text, and its errors start
 with "error:". A call whose arguments do not match the tool's schema is refused before the
-tool runs, with a message naming the problem. In every case the message says what to correct;
-fix the call and try again.
+tool runs, with a message naming the problem. Correct argument-validation errors and retry.
+For other errors, follow the message: authentication or configuration may require user or
+operator action. If only "internal error" and a correlation_id are returned, report that id
+instead of guessing argument changes or repeatedly retrying.
 """
 
 # ---------------------------------------------------------------------------
