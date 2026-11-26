@@ -470,7 +470,8 @@ async def test_exhausted_key_pool_is_returned_as_an_error_string(configured, ser
 
     result = await _call(mcp, external_id="acme", query="hello")
 
-    assert result.startswith("error: tenant key pool exhausted")
+    assert result.startswith("error: the knowledge base is not available at the moment")
+    assert "keys" not in result
 
 
 async def test_service_outage_is_returned_as_an_error_string(configured, service):
@@ -479,7 +480,23 @@ async def test_service_outage_is_returned_as_an_error_string(configured, service
 
     result = await _call(mcp, external_id="acme", query="hello")
 
-    assert result == "error: HTTP 503"
+    assert result.startswith(
+        "error: the knowledge base service failed to process the request (HTTP 503). "
+        "Try again (correlation_id: "
+    )
+
+
+async def test_upstream_error_detail_goes_to_the_log_not_the_client(configured, service, logs):
+    service.query_replies = [(403, {"detail": "tenant suspended by internal-billing"})]
+    mcp = _server()
+
+    result = await _call(mcp, external_id="acme", query="hello")
+
+    assert "internal-billing" not in result
+    correlation_id = result.rsplit(": ", 1)[1].rstrip(")")
+    assert any(
+        f"cid={correlation_id}" in line and "internal-billing" in line for line in logs
+    )
 
 
 async def test_unreadable_service_reply_is_reported_without_leaking_detail(configured, service):

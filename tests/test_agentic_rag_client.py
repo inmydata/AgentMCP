@@ -410,8 +410,11 @@ async def test_replacement_credentials_after_a_401_are_saved_to_the_cache(client
 async def test_a_second_401_is_reported_as_an_authentication_failure(client, service):
     service.script["query"] = [_reply(401, {"detail": "nope"})]
 
-    with pytest.raises(AgenticRagError, match="authentication failed"):
+    with pytest.raises(AgenticRagError, match="did not accept this server's credentials") as excinfo:
         await client.query("acme", "q", None)
+
+    assert "re-minting" not in str(excinfo.value)
+    assert "nope" in excinfo.value.detail
 
 
 async def test_key_limit_hit_while_re_minting_after_a_401_is_reported_as_such(client, service):
@@ -439,8 +442,18 @@ async def test_server_error_on_the_first_attempt_is_retried_once(client, service
 async def test_persistent_server_error_is_reported_with_its_status(client, service):
     service.script["query"] = [_reply(500, text="")]
 
-    with pytest.raises(AgenticRagError, match="HTTP 500"):
+    with pytest.raises(AgenticRagError, match=r"failed to process the request \(HTTP 500\)"):
         await client.query("acme", "q", None)
+
+
+async def test_server_error_text_is_kept_out_of_the_message(client, service):
+    service.script["query"] = [_reply(500, {"detail": "db host internal-db-01 down"})]
+
+    with pytest.raises(AgenticRagError) as excinfo:
+        await client.query("acme", "q", None)
+
+    assert "internal-db-01" not in str(excinfo.value)
+    assert "internal-db-01" in excinfo.value.detail
 
 
 async def test_persistent_server_error_is_tried_exactly_twice(client, service):
@@ -463,11 +476,14 @@ async def test_transport_error_on_the_first_attempt_is_retried(client, service):
     assert result == {"response": "back"}
 
 
-async def test_persistent_transport_error_is_reported_as_a_transport_error(client, service):
-    service.script["query"] = [httpx.ConnectTimeout("timed out")]
+async def test_persistent_transport_error_hides_the_connection_detail(client, service):
+    service.script["query"] = [httpx.ConnectTimeout("timed out connecting to rag.internal:8443")]
 
-    with pytest.raises(AgenticRagError, match="transport error"):
+    with pytest.raises(AgenticRagError, match="could not reach the knowledge base service") as excinfo:
         await client.query("acme", "q", None)
+
+    assert "rag.internal" not in str(excinfo.value)
+    assert "rag.internal" in excinfo.value.detail
 
 
 @pytest.mark.parametrize(
@@ -485,18 +501,14 @@ async def test_rate_limited_query_tells_the_caller_when_to_retry(client, service
         await client.query("acme", "q", None)
 
 
-async def test_forbidden_query_reports_the_service_detail(client, service):
+async def test_forbidden_query_keeps_the_service_detail_for_the_log(client, service):
     service.script["query"] = [_reply(403, {"detail": "tenant suspended"})]
 
-    with pytest.raises(AgenticRagError, match="tenant suspended"):
+    with pytest.raises(AgenticRagError, match=r"refused the request \(HTTP 403\)") as excinfo:
         await client.query("acme", "q", None)
 
-
-async def test_forbidden_query_without_detail_says_forbidden(client, service):
-    service.script["query"] = [_reply(403, text="")]
-
-    with pytest.raises(AgenticRagError, match="forbidden"):
-        await client.query("acme", "q", None)
+    assert "tenant suspended" not in str(excinfo.value)
+    assert "tenant suspended" in excinfo.value.detail
 
 
 async def test_validation_failure_hides_the_service_detail_from_the_caller(client, service):
@@ -506,28 +518,36 @@ async def test_validation_failure_hides_the_service_detail_from_the_caller(clien
         await client.query("acme", "q", None)
 
     assert "internal-field" not in str(excinfo.value)
-    assert "validation failed" in str(excinfo.value)
+    assert "rejected the request (HTTP 422)" in str(excinfo.value)
+    assert "internal-field" in excinfo.value.detail
 
 
-async def test_other_client_error_reports_the_service_detail(client, service):
+async def test_other_client_error_keeps_the_service_detail_for_the_log(client, service):
     service.script["query"] = [_reply(404, {"detail": "no such index"})]
 
-    with pytest.raises(AgenticRagError, match="no such index"):
+    with pytest.raises(AgenticRagError, match=r"rejected the request \(HTTP 404\)") as excinfo:
         await client.query("acme", "q", None)
+
+    assert "no such index" not in str(excinfo.value)
+    assert "no such index" in excinfo.value.detail
 
 
 async def test_client_error_with_a_non_json_body_reports_the_body_text(client, service):
     service.script["query"] = [_reply(400, text="plain text failure")]
 
-    with pytest.raises(AgenticRagError, match="plain text failure"):
+    with pytest.raises(AgenticRagError) as excinfo:
         await client.query("acme", "q", None)
+
+    assert "plain text failure" in excinfo.value.detail
 
 
 async def test_structured_error_detail_is_reported_as_json_text(client, service):
     service.script["query"] = [_reply(400, {"detail": {"code": "bad_thing"}})]
 
-    with pytest.raises(AgenticRagError, match="bad_thing"):
+    with pytest.raises(AgenticRagError) as excinfo:
         await client.query("acme", "q", None)
+
+    assert "bad_thing" in excinfo.value.detail
 
 
 async def test_client_error_with_no_usable_detail_falls_back_to_the_status(client, service):
@@ -572,8 +592,10 @@ async def test_provisioning_transport_error_is_retried_once(client, service):
 async def test_persistent_provisioning_transport_error_is_reported(client, service):
     service.script["provision"] = [httpx.ConnectError("down")]
 
-    with pytest.raises(AgenticRagError, match="transport error"):
+    with pytest.raises(AgenticRagError, match="could not reach the knowledge base service") as excinfo:
         await client.query("acme", "q", None)
+
+    assert "down" in excinfo.value.detail
 
 
 async def test_persistent_provisioning_server_error_is_reported_with_its_status(client, service):
@@ -616,8 +638,11 @@ async def test_client_error_with_a_json_list_body_falls_back_to_the_status(clien
 async def test_provisioning_conflict_means_the_key_pool_is_exhausted(client, service):
     service.script["provision"] = [_reply(409, {"detail": "conflict"})]
 
-    with pytest.raises(KeyLimitExhausted, match="20 active keys"):
+    with pytest.raises(KeyLimitExhausted, match="an operator needs to fix this") as excinfo:
         await client.query("acme", "q", None)
+
+    assert "keys" not in str(excinfo.value)
+    assert "20 active keys" in excinfo.value.detail
 
 
 async def test_bad_request_naming_the_key_limit_means_the_key_pool_is_exhausted(client, service):
@@ -634,13 +659,15 @@ async def test_key_limit_detail_on_other_client_errors_is_also_recognised(client
         await client.query("acme", "q", None)
 
 
-async def test_unrelated_bad_request_while_provisioning_reports_the_detail(client, service):
+async def test_unrelated_bad_request_while_provisioning_keeps_the_detail_for_the_log(client, service):
     service.script["provision"] = [_reply(400, {"detail": "name too long"})]
 
-    with pytest.raises(AgenticRagError, match="name too long") as excinfo:
+    with pytest.raises(AgenticRagError, match=r"rejected the request \(HTTP 400\)") as excinfo:
         await client.query("acme", "q", None)
 
     assert not isinstance(excinfo.value, KeyLimitExhausted)
+    assert "name too long" not in str(excinfo.value)
+    assert "name too long" in excinfo.value.detail
 
 
 async def test_provisioning_validation_failure_hides_the_service_detail(client, service):
@@ -650,7 +677,8 @@ async def test_provisioning_validation_failure_hides_the_service_detail(client, 
         await client.query("acme", "q", None)
 
     assert "secret-internal-detail" not in str(excinfo.value)
-    assert "admin request validation failed" in str(excinfo.value)
+    assert "rejected the request (HTTP 422)" in str(excinfo.value)
+    assert "secret-internal-detail" in excinfo.value.detail
 
 
 async def test_minting_failure_is_reported_and_nothing_is_cached(client, service, cache_file):

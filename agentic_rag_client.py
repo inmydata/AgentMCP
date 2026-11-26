@@ -26,11 +26,52 @@ _log = logging.getLogger("agentic_rag")
 
 
 class AgenticRagError(Exception):
-    """Raised when a call cannot be completed. The message is safe to surface to the LLM."""
+    """Raised when a call cannot be completed.
+
+    ``str(exc)`` is a short message written here, safe to send to the MCP
+    client. ``exc.detail`` holds what went wrong underneath (upstream error
+    text, connection errors, status codes) for the server log only: it can
+    contain internal addresses or upstream wording and must not be sent on.
+    """
+
+    def __init__(self, message: str, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
 
 
 class KeyLimitExhausted(AgenticRagError):
     """Raised when a tenant already has the maximum number of active API keys."""
+
+
+_UNREACHABLE = "could not reach the knowledge base service. Try again"
+_KEY_LIMIT_MESSAGE = "the knowledge base is not available at the moment; an operator needs to fix this"
+_KEY_LIMIT_DETAIL = (
+    "tenant key pool exhausted (20 active keys). An operator must revoke stale "
+    "keys via the admin API before this tool can recover"
+)
+
+
+def _rate_limited(resp: httpx.Response) -> AgenticRagError:
+    """The error for a 429 reply, telling the caller when to retry."""
+    retry_after = resp.headers.get("Retry-After", "?")
+    try:
+        retry_after = str(int(retry_after))
+    except (TypeError, ValueError):
+        retry_after = "?"
+    return AgenticRagError(f"rate limited; retry in {retry_after}s")
+
+
+def _status_error(status: int, detail: str, where: str) -> AgenticRagError:
+    """The error for any other failed reply; the upstream detail goes to ``.detail`` only."""
+    log_detail = f"{where} returned HTTP {status}: {detail or '(no detail)'}"
+    if status == 403:
+        return AgenticRagError("the knowledge base service refused the request (HTTP 403)", log_detail)
+    if 400 <= status < 500:
+        return AgenticRagError(f"the knowledge base service rejected the request (HTTP {status})", log_detail)
+    return AgenticRagError(
+        f"the knowledge base service failed to process the request (HTTP {status}). Try again",
+        log_detail,
+    )
 
 
 @dataclass
@@ -217,14 +258,16 @@ class AgenticRagClient:
                 if attempt == 0:
                     await asyncio.sleep(random.uniform(0.2, 0.5))
                     continue
-                raise AgenticRagError(f"transport error: {exc}") from exc
+                raise AgenticRagError(
+                    _UNREACHABLE, f"/v1/query transport error: {exc!r}"
+                ) from exc
 
             if 500 <= resp.status_code < 600 and attempt == 0:
                 await asyncio.sleep(random.uniform(0.2, 0.5))
                 continue
             return resp
         assert last_exc is not None
-        raise AgenticRagError(f"transport error: {last_exc}")
+        raise AgenticRagError(_UNREACHABLE, f"/v1/query transport error: {last_exc!r}")
 
     def _handle_query_response(self, resp: httpx.Response) -> dict:
         status = resp.status_code
@@ -234,22 +277,13 @@ class AgenticRagClient:
         detail = self._extract_detail(resp)
 
         if status == 401:
-            raise AgenticRagError("authentication failed (re-mint attempted)")
+            raise AgenticRagError(
+                "the knowledge base service did not accept this server's credentials",
+                f"/v1/query returned HTTP 401 after re-minting the tenant key: {detail or '(no detail)'}",
+            )
         if status == 429:
-            retry_after = resp.headers.get("Retry-After", "?")
-            try:
-                retry_after = str(int(retry_after))
-            except (TypeError, ValueError):
-                retry_after = "?"
-            raise AgenticRagError(f"rate limited; retry in {retry_after}s")
-        if status == 403:
-            raise AgenticRagError(detail or "forbidden")
-        if status == 422:
-            _log.warning("agentic_rag /v1/query 422 detail: %s", detail)
-            raise AgenticRagError("request validation failed - see server log")
-        if 400 <= status < 500:
-            raise AgenticRagError(detail or f"HTTP {status}")
-        raise AgenticRagError(detail or f"HTTP {status}")
+            raise _rate_limited(resp)
+        raise _status_error(status, detail, "/v1/query")
 
     async def _post_admin(self, path: str, body: dict) -> dict:
         last_exc: Optional[Exception] = None
@@ -268,7 +302,9 @@ class AgenticRagClient:
                 if attempt == 0:
                     await asyncio.sleep(random.uniform(0.2, 0.5))
                     continue
-                raise AgenticRagError(f"transport error: {exc}") from exc
+                raise AgenticRagError(
+                    _UNREACHABLE, f"admin {path} transport error: {exc!r}"
+                ) from exc
 
             if 500 <= resp.status_code < 600 and attempt == 0:
                 await asyncio.sleep(random.uniform(0.2, 0.5))
@@ -281,32 +317,15 @@ class AgenticRagClient:
             detail = self._extract_detail(resp)
 
             if status == 429:
-                retry_after = resp.headers.get("Retry-After", "?")
-                try:
-                    retry_after = str(int(retry_after))
-                except (TypeError, ValueError):
-                    retry_after = "?"
-                raise AgenticRagError(f"rate limited; retry in {retry_after}s")
-            if status == 409 or (status == 400 and _is_key_limit_error(detail)):
+                raise _rate_limited(resp)
+            if status == 409 or _is_key_limit_error(detail):
                 raise KeyLimitExhausted(
-                    "tenant key pool exhausted (20 active keys). "
-                    "An operator must revoke stale keys via the admin API "
-                    "before this tool can recover."
+                    _KEY_LIMIT_MESSAGE,
+                    f"{_KEY_LIMIT_DETAIL}; admin {path} returned HTTP {status}: {detail or '(no detail)'}",
                 )
-            if _is_key_limit_error(detail):
-                raise KeyLimitExhausted(
-                    "tenant key pool exhausted (20 active keys). "
-                    "An operator must revoke stale keys via the admin API "
-                    "before this tool can recover."
-                )
-            if status == 422:
-                _log.warning("agentic_rag admin %s 422 detail: %s", path, detail)
-                raise AgenticRagError("admin request validation failed - see server log")
-            if 400 <= status < 500:
-                raise AgenticRagError(detail or f"HTTP {status}")
-            raise AgenticRagError(detail or f"HTTP {status}")
+            raise _status_error(status, detail, f"admin {path}")
         assert last_exc is not None
-        raise AgenticRagError(f"transport error: {last_exc}")
+        raise AgenticRagError(_UNREACHABLE, f"admin {path} transport error: {last_exc!r}")
 
     @staticmethod
     def _extract_detail(resp: httpx.Response) -> str:
