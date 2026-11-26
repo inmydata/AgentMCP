@@ -658,8 +658,20 @@ class mcp_utils:
                 "query_results rejected [%s]: %s (instance_id=%r)",
                 correlation_id, e, instance_id,
             )
-            # Deliberately generic (fb17d7e): the caller is not told which
-            # check refused the request.
+            # The messages say which kind of check failed so the caller can fix
+            # it, but never echo the caller's input or the matched keyword.
+            # A missing tenant is a server fault the caller cannot fix, so it
+            # stays generic.
+            if isinstance(e, InvalidInstanceId):
+                return error(
+                    "instance_id is not in the expected format. Use the instance_id exactly "
+                    "as returned by get_rows_fast or get_top_n_fast."
+                )
+            if isinstance(e, UnsafeSql):
+                return error(
+                    "This type of SQL statement is not allowed. Write a query that reads "
+                    "from my_table, such as a SELECT."
+                )
             return error("invalid request")
 
         if not db_path.exists():

@@ -350,24 +350,23 @@ class TestQueryResults:
         pytest.param("", id="empty"),
         pytest.param(str(uuid.uuid4()) + "/../other", id="uuid-with-parent-suffix"),
     ])
-    async def test_rejects_bad_instance_id_with_generic_error(self, utils_instance, duckdb_dir, bad_id):
+    async def test_rejects_bad_instance_id_without_echoing_it(self, utils_instance, duckdb_dir, bad_id):
         result_json = await utils_instance.query_results(bad_id, "SELECT 1")
         result = json.loads(result_json)
-        assert result.get("error") == "invalid request"
+        assert result.get("error", "").startswith("instance_id is not in the expected format.")
         assert "correlation_id" in result
-        # Must not leak the reason
+        # Says the format is wrong, but not how the path check works or what was sent
         assert "traversal" not in result_json.lower()
-        assert "uuid" not in result_json.lower()
         if bad_id:
             assert bad_id not in result_json
 
     @pytest.mark.asyncio
-    async def test_rejects_unsafe_sql_with_generic_error(self, utils_instance, duckdb_dir, populated_instance):
+    async def test_rejects_unsafe_sql_without_naming_the_keyword(self, utils_instance, duckdb_dir, populated_instance):
         result_json = await utils_instance.query_results(
             populated_instance, "ATTACH 'other.duckdb'"
         )
         result = json.loads(result_json)
-        assert result.get("error") == "invalid request"
+        assert result.get("error", "").startswith("This type of SQL statement is not allowed.")
         assert "ATTACH" not in result_json
         assert "keyword" not in result_json.lower()
 
