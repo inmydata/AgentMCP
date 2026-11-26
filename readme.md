@@ -51,7 +51,7 @@ Required environment variables (see `.env.example`):
 - `INMYDATA_MCP_HOST` (optional) - MCP server host (default: mcp.inmydata.ai)
 - `INMYDATA_AUTH_SERVER` (optional) - OAuth authorization server URL (default: https://auth.inmydata.com)
 - `INMYDATA_SERVER` (optional) - inmydata server (default: inmydata.com)
-- `SSL_CERT_FILE` (optional, local development only) - CA bundle for outgoing HTTPS calls. Needed when `INMYDATA_AUTH_SERVER` points at a local auth server with an mkcert certificate; see [Using a local auth server](#using-a-local-auth-server-mkcert-certificates)
+- `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` (optional, local development only) - CA bundle for outgoing HTTPS calls. Needed when the auth server or the inmydata API runs locally with an mkcert certificate; see [Using a local auth server](#using-a-local-auth-server-mkcert-certificates)
 
 ## Usage
 
@@ -105,12 +105,13 @@ The tenant is automatically extracted from the token's `client_imd_tenant` or `i
 
 ##### Using a local auth server (mkcert certificates)
 
-If `INMYDATA_AUTH_SERVER` points at an auth server running on your own machine (for example `auth-dev.inmydata.com` mapped to `127.0.0.1` in your `hosts` file), that server will usually use a certificate made by [mkcert](https://github.com/FiloSottile/mkcert).
+If `INMYDATA_AUTH_SERVER` or the inmydata API points at a server running on your own machine (for example `auth-dev.inmydata.com` or `dev.inmydata.com` mapped to `127.0.0.1` in your `hosts` file), that server will usually use a certificate made by [mkcert](https://github.com/FiloSottile/mkcert).
 
-`mkcert -install` makes Windows and your browsers trust that certificate, but Python does not. `httpx` checks certificates against its own `certifi` bundle, which does not contain the mkcert root CA. Without the fix below:
+`mkcert -install` makes Windows and your browsers trust that certificate, but Python does not. Python's HTTP libraries check certificates against their own `certifi` bundle, which does not contain the mkcert root CA. Without the fix below:
 
 - `POST /connect/token` returns **500**, because the token proxy cannot connect to the auth server (`CERTIFICATE_VERIFY_FAILED` in the server log). MCP clients such as ChatGPT fail to sign in.
-- Once that is fixed, token checks on `/mcp` would fail in the same way, because the signing keys (JWKS) are also downloaded from the auth server.
+- Token checks on `/mcp` fail in the same way, because the signing keys (JWKS) are also downloaded from the auth server.
+- Tool calls fail with `requests.exceptions.SSLError ... CERTIFICATE_VERIFY_FAILED`, because the inmydata SDK cannot connect to the local API.
 
 To fix it, give Python a CA bundle that contains both the normal `certifi` certificates and your mkcert root CA:
 
@@ -123,18 +124,21 @@ echo >> "$B"
 cat "$(mkcert -CAROOT)/rootCA.pem" >> "$B"
 ```
 
-Then add this to `.env`:
+Then add both of these to `.env`, pointing at the same file:
 
 ```
 SSL_CERT_FILE=C:\Users\<you>\.certs\certifi-plus-mkcert.pem
+REQUESTS_CA_BUNDLE=C:\Users\<you>\.certs\certifi-plus-mkcert.pem
 ```
+
+Two settings are needed because two HTTP libraries are in use. `httpx` (the token proxy and JWKS downloads) reads `SSL_CERT_FILE`. `requests` (the inmydata SDK) ignores `SSL_CERT_FILE` and reads `REQUESTS_CA_BUNDLE`.
 
 Notes:
 
 - The bundle must contain both sets of certificates. A file with only the mkcert root CA would stop calls to real servers, such as `auth.inmydata.com`, from working.
 - Keep the file outside the repository.
 - It is a copy, so rebuild it if you upgrade `certifi` or regenerate your mkcert CA.
-- This is for local development only. Do not set `SSL_CERT_FILE` in deployed environments.
+- This is for local development only. Do not set either setting in deployed environments.
 
 ##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false or unset - default)
 
