@@ -139,6 +139,8 @@ def remote_server_url(dev_api: DevApiSettings, server_workdir: Path) -> Iterator
     port = _free_port()
     env = _clean_env()
     env["INMYDATA_USE_OAUTH"] = "false"
+    # server_remote.py refuses to start without OAuth unless this is set.
+    env["INMYDATA_ALLOW_LEGACY_AUTH"] = "true"
     env["MCP_DUCKDB_LOCATION"] = str(server_workdir / "duckdb")
     log_path = server_workdir / "server_remote.log"
     with open(log_path, "wb") as log:

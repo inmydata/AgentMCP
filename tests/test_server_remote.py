@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import agentic_rag_client  # noqa: E402
 import mcp_logging  # noqa: E402
 from errors import UserFacingError  # noqa: E402
+from fastmcp import Client  # noqa: E402
 from fastmcp.server.auth.providers.jwt import AccessToken  # noqa: E402
 
 MCP_HOST = "mcp.example.test"
@@ -59,6 +60,7 @@ _MANAGED_ENV = (
     "INMYDATA_SERVER",
     "INMYDATA_AUTH_SERVER",
     "INMYDATA_USE_OAUTH",
+    "INMYDATA_ALLOW_LEGACY_AUTH",
     "INMYDATA_INTROSPECTION_CLIENT_ID",
     "INMYDATA_INTROSPECTION_CLIENT_SECRET",
     "INMYDATA_PAT_CACHE_MAX_TTL",
@@ -269,6 +271,9 @@ def load_server(monkeypatch, tmp_path):
         monkeypatch.setenv("INMYDATA_SERVER", SERVER)
         monkeypatch.setenv("INMYDATA_AUTH_SERVER", AUTH_SERVER)
         monkeypatch.setenv("INMYDATA_USE_OAUTH", "true" if oauth else "false")
+        if not oauth:
+            # The server refuses to start without OAuth unless this is set.
+            monkeypatch.setenv("INMYDATA_ALLOW_LEGACY_AUTH", "true")
         monkeypatch.setenv("AGENTIC_RAG_CACHE_FILE", str(tmp_path / "rag_cache.json"))
         for name, value in (env or {}).items():
             if value is None:
@@ -1482,6 +1487,69 @@ class TestImportTimeSettings:
 
         # Assert
         assert server.module.INMYDATA_USE_OAUTH is expected
+
+    @pytest.mark.parametrize(
+        "allow",
+        [
+            pytest.param(None, id="unset"),
+            pytest.param("false", id="false"),
+            pytest.param("yes", id="yes-is-not-true"),
+        ],
+    )
+    def test_refuses_to_start_without_oauth_unless_legacy_auth_is_allowed(self, load_server, allow):
+        # Act / Assert
+        with pytest.raises(RuntimeError, match="will not start without OAuth"):
+            load_server(oauth=False, env={"INMYDATA_ALLOW_LEGACY_AUTH": allow})
+
+    def test_starts_without_oauth_when_legacy_auth_is_allowed(self, load_server):
+        # Act
+        server = load_server(oauth=False, env={"INMYDATA_ALLOW_LEGACY_AUTH": "TRUE"})
+
+        # Assert
+        assert server.module.INMYDATA_USE_OAUTH is False
+
+    def test_starts_with_oauth_without_the_legacy_setting(self, load_server):
+        # Act
+        server = load_server(oauth=True, env={"INMYDATA_ALLOW_LEGACY_AUTH": None})
+
+        # Assert
+        assert server.module.INMYDATA_USE_OAUTH is True
+
+    @pytest.mark.parametrize("oauth", [pytest.param(True, id="oauth"), pytest.param(False, id="legacy")])
+    async def test_an_exception_escaping_a_tool_is_reported_without_its_text(self, load_server, oauth):
+        # Arrange: every real tool catches its own errors, so add one that does not.
+        server = load_server(oauth=oauth)
+
+        @server.module.mcp.tool
+        def escaping_tool() -> str:
+            raise RuntimeError("secret host db-01.internal")
+
+        # Act
+        async with Client(server.module.mcp) as client:
+            result = await client.call_tool("escaping_tool", {}, raise_on_error=False)
+
+        # Assert
+        assert result.is_error
+        assert result.content[0].text == "Error calling tool 'escaping_tool'"
+
+    @pytest.mark.parametrize("oauth", [pytest.param(True, id="oauth"), pytest.param(False, id="legacy")])
+    async def test_argument_errors_still_reach_the_caller_without_the_value_sent(self, load_server, oauth):
+        # Arrange: "logic" is not a documented filter key, so pydantic refuses it.
+        server = load_server(oauth=oauth)
+        where = [{"field": "Region", "value": "Wales", "logic": "secret-value"}]
+
+        # Act
+        async with Client(server.module.mcp) as client:
+            result = await client.call_tool(
+                "get_rows_fast", {"subject": "S", "select": ["A"], "where": where}, raise_on_error=False
+            )
+
+        # Assert
+        text = result.content[0].text
+        assert result.is_error
+        assert text.startswith("Error calling tool 'get_rows_fast': invalid arguments: ")
+        assert "where.0.logic" in text
+        assert "secret-value" not in text
 
     def test_audience_and_issuer_are_built_from_the_configured_hosts(self, oauth_server):
         # Arrange / Act

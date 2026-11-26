@@ -47,7 +47,8 @@ Required environment variables (see `.env.example`):
 
 ### Remote Server Additional Configuration
 
-- `INMYDATA_USE_OAUTH` (optional) - Set to `true` to enable OAuth authentication, or `false`/unset for legacy API key authentication (default: false)
+- `INMYDATA_USE_OAUTH` - Set to `true` to enable OAuth authentication. Deployed servers must set this. If it is `false` or unset, the server uses legacy API key authentication and refuses to start unless `INMYDATA_ALLOW_LEGACY_AUTH` is also `true`
+- `INMYDATA_ALLOW_LEGACY_AUTH` (local testing only) - Set to `true` to let the server start with OAuth off. Never set it in a deployed environment; see [Legacy API Key Authentication](#legacy-api-key-authentication-inmydata_use_oauthfalse-local-testing-only)
 - `INMYDATA_MCP_HOST` (optional) - MCP server host (default: mcp.inmydata.ai)
 - `INMYDATA_AUTH_SERVER` (optional) - OAuth authorization server URL (default: https://auth.inmydata.com)
 - `INMYDATA_SERVER` (optional) - inmydata server (default: inmydata.com)
@@ -140,7 +141,9 @@ Notes:
 - It is a copy, so rebuild it if you upgrade `certifi` or regenerate your mkcert CA.
 - This is for local development only. Do not set either setting in deployed environments.
 
-##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false or unset - default)
+##### Legacy API Key Authentication (INMYDATA_USE_OAUTH=false, local testing only)
+
+Do not deploy the server in this mode. Without OAuth, each caller chooses the tenant and the inmydata server, and can make the server use an API key from its own environment (see "Environment Variable Lookup" below). The server refuses to start this way unless `INMYDATA_ALLOW_LEGACY_AUTH=true` is also set.
 
 When OAuth is disabled, the server uses traditional API key authentication:
 
