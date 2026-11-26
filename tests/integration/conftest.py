@@ -109,12 +109,15 @@ def _clean_env() -> dict[str, str]:
     ``<TENANT>_API_KEY`` (the remote server prefers that over the header), so
     only the test settings reach the servers.
     """
-    return {
+    env = {
         k: v
         for k, v in os.environ.items()
         if not k.upper().startswith(("INMYDATA_", "AGENTIC_RAG_"))
         and not k.upper().endswith("_API_KEY")
         and k.upper() not in ("MCP_DEBUG", "MCP_SAMPLE_ROWS")
+
+    env["NO_PROXY"] = env["no_proxy"] = "*"
+    return env
     }
 
 
