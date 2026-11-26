@@ -107,10 +107,21 @@ def _api_message(body: str) -> str:
                 )
             else:
                 text = str(problem.get("title") or "")
-    text = " ".join(_CONTROL_CHARS_RE.sub(" ", text).split())
-    if len(text) > MAX_API_MESSAGE_CHARS:
-        text = text[: MAX_API_MESSAGE_CHARS - 3].rstrip() + "..."
-    return text
+    return clean_upstream_text(text, MAX_API_MESSAGE_CHARS)
+
+
+def clean_upstream_text(text: object, max_chars: int) -> str:
+    """Make text written by an upstream service safe to pass on to the MCP caller.
+
+    Control characters (including newlines) become spaces, runs of white space
+    become one space, and anything longer than ``max_chars`` is cut short with
+    "...". This stops multi-line dumps such as stack traces and limits how much
+    an unexpected upstream message can carry; it does not judge the content.
+    """
+    cleaned = " ".join(_CONTROL_CHARS_RE.sub(" ", str(text)).split())
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[: max_chars - 3].rstrip() + "..."
+    return cleaned
 
 
 def describe_error(exc: BaseException, *, context: str) -> Optional[str]:
