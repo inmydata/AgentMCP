@@ -138,10 +138,9 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
             "agentic_rag not configured (missing AGENTIC_RAG_BASE_URL and/or AGENTIC_RAG_PSK); "
             "tool will be registered but will return an error on every call"
         )
-        err_msg = (
-            "error: agentic_rag not configured "
-            "(missing AGENTIC_RAG_BASE_URL and/or AGENTIC_RAG_PSK)"
-        )
+        # The client only needs to know the tool is unavailable; the names of the
+        # missing settings are for the operator and stay in the log line above.
+        err_msg = "error: agentic_rag not configured"
         _register_stub(mcp, err_msg, use_oauth=use_oauth, has_default=bool(default_eid))
         return
 

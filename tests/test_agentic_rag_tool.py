@@ -215,6 +215,14 @@ async def test_unconfigured_tool_returns_a_configuration_error():
     assert result.startswith("error: agentic_rag not configured")
 
 
+async def test_unconfigured_tool_does_not_name_the_missing_settings_to_the_client():
+    mcp = _server()
+
+    result = await _call(mcp, external_id="acme", query="hello")
+
+    assert "AGENTIC_RAG" not in result
+
+
 async def test_unconfigured_tool_with_a_default_tenant_does_not_ask_for_external_id(monkeypatch):
     monkeypatch.setenv("AGENTIC_RAG_DEFAULT_EXTERNAL_ID", "acme")
     mcp = _server()
