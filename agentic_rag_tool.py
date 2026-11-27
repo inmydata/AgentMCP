@@ -27,7 +27,7 @@ from agentic_rag_client import (
     KeyLimitExhausted,
 )
 from errors import log_tool_error
-from mcp_logging import logger as agentmcp_logger
+from mcp_logging import log_field, logger as agentmcp_logger
 
 
 _log = logging.getLogger("agentmcp.agentic_rag")
@@ -153,12 +153,14 @@ def register(mcp, tenant_resolver: Optional[Callable[[], Any]] = None) -> None:
             result = await client.query(external_id, query_text, session_id)
         except AgenticRagError as exc:
             # The client gets the short message and an id; the detail (upstream
-            # text, connection errors) stays in the log under that id.
+            # text, connection errors) stays in the log under that id. The
+            # external_id and upstream text are escaped so a newline in either
+            # cannot start a forged log line or split this entry from its cid.
             cid = uuid.uuid4().hex[:8]
             kind = "key-limit exhausted" if isinstance(exc, KeyLimitExhausted) else "error"
             agentmcp_logger.error(
                 "tool error in agentic_rag_query (cid=%s): %s for external_id=%s: %s | detail: %s",
-                cid, kind, external_id, exc, exc.detail or "-",
+                cid, kind, log_field(external_id), log_field(exc), log_field(exc.detail or "-"),
             )
             return f"error: {exc} (correlation_id: {cid})"
         except Exception as exc:

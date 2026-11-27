@@ -261,7 +261,10 @@ class TestQueryResults:
         result = json.loads(await utils_instance.query_results("../etc/passwd", "SELECT 1"))
 
         # Assert
-        assert result["error"] == "invalid request"
+        assert result["error"] == (
+            "instance_id is not in the expected format. Use the instance_id exactly "
+            "as returned by get_rows_fast or get_top_n_fast."
+        )
         assert result["correlation_id"]
 
     async def test_rejects_unsafe_sql_with_a_correlation_id(self, utils_instance, duckdb_dir):
@@ -272,7 +275,10 @@ class TestQueryResults:
         result = json.loads(await utils_instance.query_results(instance_id, "COPY my_table TO 'x.csv'"))
 
         # Assert
-        assert result["error"] == "invalid request"
+        assert result["error"] == (
+            "This type of SQL statement is not allowed. Write a query that reads "
+            "from my_table, such as a SELECT."
+        )
         assert result["correlation_id"]
 
     async def test_rejects_a_blank_tenant(self, no_tenant_instance, duckdb_dir):

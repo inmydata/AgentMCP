@@ -255,11 +255,104 @@ Tool errors are JSON: `{"error": "<message>", "correlation_id": "<id>"}`. The me
 | inmydata API 5xx | Fixed text, plus the platform's support reference if the response has one. The response body is not passed on. |
 | Cannot connect, or no response in time | Fixed text |
 | `query_results_fast`: mistake in the caller's SQL (syntax, unknown column or table, bad conversion) | Fixed text plus the column names of `my_table`, which the caller already has. DuckDB's own message stays in the log. |
-| `query_results_fast`: malformed `instance_id` or blocked SQL statement (`ATTACH`, `COPY`, ...) | `invalid request`. Deliberately does not say which check refused it. |
+| `query_results_fast`: malformed `instance_id` | Fixed text saying the `instance_id` is not in the expected format and to use it exactly as `get_rows_fast` / `get_top_n_fast` returned it. The value sent is not repeated back. |
+| `query_results_fast`: blocked SQL statement (`ATTACH`, `COPY`, `SET`, ...) | Fixed text saying this type of statement is not allowed and to query `my_table`. Does not name the keyword that was blocked. |
+| `query_results_fast`: no tenant set on the server | `invalid request` |
 | `query_results_fast`: `instance_id` not found, or belongs to another tenant | Fixed text saying to run `get_rows_fast` / `get_top_n_fast` again. The same in both cases. |
 | Anything else, including a bug in this server or a DuckDB engine failure | `internal error` |
 
 Only API messages from 4xx responses are passed on, because they describe the caller's own request. Other exception text stays in the log, as required by GHSA-xv3j-j949-g8wx.
+
+## Logging
+
+### How logging works
+
+All of the server's own diagnostic output goes through one Python logger called `agentmcp`, set up in `mcp_logging.py`. The server code does not use `print()`, apart from a few debugger messages that `server.py` writes to stderr. A test (`tests/test_logging_safety.py`) fails if `print(` is added to a server module, or if a log call puts something that looks like a credential (`api_key`, `access_token`, `Bearer `, `Authorization:`) into its message.
+
+- **Where logs go:** standard error (stderr). In Docker that is `docker logs`; on AWS ECS it is CloudWatch Logs.
+- **Line format:** `<date and time> <level> <logger name>: <message>`, for example
+  `2026-11-27 10:15:02,123 INFO agentmcp: get_rows called (subject=Inmystore Sales, fields=3, where_terms=1)`.
+  The agentic RAG tool logs under `agentmcp.agentic_rag`.
+- **Log level:** set with `AGENTMCP_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING` or `ERROR`; default `INFO`). Keep production at `INFO`. `DEBUG` adds the full filters and SQL that callers sent, and redacted introspection error responses.
+- **Values from the request** on the per-request lines (tenant, client ID, user agent, the RPC method name and so on) are escaped before they are logged, so a newline sent by a caller cannot start a fake log line.
+
+### What is never logged
+
+These rules come from security advisory GHSA-3x42-7cvw-r9jv:
+
+- **Tokens and API keys.** Where a log line needs to say which credential was used, it shows `token=<8 characters>` instead. This is a *fingerprint*: the first 8 hexadecimal characters of the SHA-256 hash of the credential (see `token_fingerprint` in `mcp_logging.py`). The credential is whatever the caller sent in the `Authorization` header, minus the `Bearer ` prefix: an OAuth access token (JWT), a Personal Access Token (PAT), or, in legacy mode, an inmydata API key.
+  - The fingerprint cannot be turned back into the token, so it is safe to share.
+  - The same token always gives the same fingerprint, so you can use it to find every line for one caller's token.
+  - If you have a token, you can work out its fingerprint yourself and search for it:
+    `python -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8])" <token>`
+  - `token=-` means no token was sent.
+- **Credential fields in data structures.** Before a structure (such as an introspection error response) is logged, `redact()` replaces any field whose name contains `token`, `secret`, `password`, `authorization` or `api_key` with `***`. These structures are only logged at `DEBUG`.
+
+### What to expect in the logs
+
+**One line per request to `/mcp`** (remote server only, from `request_logging.py`). This is written for every request, including the `initialize` handshake and requests that are refused with 401 before any tool runs:
+
+```
+MCP request: POST /mcp rpc=tools/call:get_rows_fast status=200 client_id=claude-connector tenant=acme token=3f9a1c2e
+```
+
+| Field | Meaning |
+|---|---|
+| `rpc` | The JSON-RPC method, plus the tool name for tool calls (`tools/call:get_schema`). `-` if it could not be read, for example on a GET. |
+| `status` | The HTTP status the server sent back. 401 means the token was missing, invalid or expired. |
+| `client_id` | The OAuth client the token was issued to (for example, the connector a customer is using). `-` in legacy mode. |
+| `tenant` | The inmydata tenant. With OAuth it comes from the token's `client_imd_tenant` or `imd_tenant` claim; in legacy mode from the `tenant` query parameter or `x-inmydata-tenant` header. |
+| `token` | The fingerprint of the caller's token, as described above. |
+| `claims=unverified` | Only appears when the token was not accepted. The client ID and tenant were read from the token without checking its signature, so treat them as a guide, not proof. |
+
+Requests that arrive with no `Authorization` header at all are logged separately, as `MCP request without token: ... ip=<address> user_agent=<agent>`. These are normally the first step of a connector's OAuth sign-in, or internet scanners, and are kept apart so they do not mix with real traffic.
+
+**Tool activity** (both servers, from `mcp_utils.py`):
+
+- `get_rows called (...)` / `get_rows completed (subject=..., row_count=..., sample_rows=..., instance_id=...)`, and the same for `get_top_n`. The `instance_id` is the saved DuckDB result, if the result was large enough to be saved.
+- `query_results called [<cid>] (instance_id=..., sql_chars=...)` and `query_results succeeded [<cid>] (... row_count=...)`. The SQL itself is only logged at `DEBUG`.
+
+**Sign-in checks** (remote server with OAuth, from `pat_jwt_auth.py`). These show why a token was refused:
+
+- `Introspection reports token inactive (token=<fp>)` (INFO): the PAT has expired or been revoked.
+- `Introspection failed (token=<fp>, status=<status>)` (WARNING): the auth server refused the introspection request.
+- `HTTP error during token introspection` / `Error during token introspection` (WARNING): the auth server could not be reached.
+- At `DEBUG` only: `JWT verification failed (token=<fp>, reason=<exception type>)`, followed by an introspection attempt, plus cache hits.
+
+**Tool errors** (both servers, from `errors.py`). Each one has a correlation ID (`cid`), the same 8-character ID that the MCP client receives in `correlation_id`:
+
+- `WARNING agentmcp: tool error in get_rows_fast (cid=1a2b3c4d): <the API's error>`: an inmydata API 4xx error, which the caller can fix (wrong field name, bad filter and so on). No traceback.
+- `ERROR agentmcp: tool error in get_rows_fast (cid=1a2b3c4d)` followed by a full traceback: everything else (API 401/403/5xx, timeouts, bugs in this server). The last line of the traceback holds the exception text, including the API's response body.
+- `query_results ... [<cid>]` warnings: SQL that was blocked, an unknown `instance_id`, or SQL that DuckDB rejected (with DuckDB's message).
+- `tool error in agentic_rag_query (cid=...)`: errors from the agentic RAG service, with its detail.
+
+### Finding the log entries for a customer's problem
+
+1. **The customer has a correlation ID** (every tool error shows one): search the logs for `cid=<id>` or `[<id>]`. That gives the tool, the full error and, for errors, the traceback.
+2. **No correlation ID:** search for the tenant (`tenant=<name>`) around the time of the problem. The `MCP request:` lines show which tools were called and their HTTP status. The `token=` fingerprint on those lines then lets you follow that one caller's token through the sign-in checks and other requests.
+3. **Sign-in problems:** look for `status=401` on the `MCP request:` lines, then for `Introspection ...` lines with the same `token=` fingerprint.
+
+### Cross-referencing with the inmydata API logs
+
+The correlation ID is created by this server and is **not sent to the inmydata API**, so it will not appear in the API's logs. The API does not log tokens or token fingerprints either. The links between the two sets of logs are described below.
+
+**What the API logs.** The data endpoint, `/api/developer/v1/ai/data`, is used by `get_rows`, `get_top_n`, `get_rows_fast` and `get_top_n_fast`. Since the inmydata changes of 17 November 2026 (commits `0354fc449` and `72f21228c` in `datapaltd/inmydata`), this endpoint logs its failures at Error level as follows:
+
+| What happened | API response | API log line |
+|---|---|---|
+| Unexpected failure | HTTP 500: `Unable to retrieve data. Contact support with reference <32 hex characters>.` | `Error in AIController.GetData (reference <same 32 hex characters>): <full error, including inner errors>` |
+| Bad field, filter or subject in the request (wrong name, hidden field, field requested twice) | HTTP 400 with a one-line message, for example `Field 'Invoice Date' not found in subject 'Jobs'. Use a field from the subject schema...` | `Error in AIController.GetData: <full error>`. Contains the same message, with no reference. |
+| The export step behind the endpoint failed | (leads to the HTTP 500 above) | `Tenant '<tenant>': Data request 'exportdata' failed (status <status>): <detail>` (or `'getpasaidata'` for PAS subjects), logged just before the 500 line |
+| Request body could not be read (missing required value and so on) | HTTP 400 with a one-line summary | Not logged |
+
+The other endpoints (schema, calendar, question and chart) were not changed, so they have no support reference.
+
+**How to match the two logs:**
+
+- **API 500s: use the support reference.** This is the most reliable link. The customer's error message ends `quoting reference <hex>`. This server's ERROR line for the same correlation ID includes the API's full response, with the same reference in it. Search the API logs for `reference <hex>` to find the `Error in AIController.GetData` line and the full error.
+- **API 400s: use the message text.** This server's WARNING line (`tool error in get_rows_fast (cid=...): ...`) contains the API's message, and the customer saw the same text (shortened to 300 characters if necessary). Search the API logs for `Error in AIController.GetData` lines containing that message, at about the same time.
+- **Anything else: use tenant and time.** Every API call goes to `https://<tenant>.<server>/api/developer/v1/...`, so the tenant in this server's log is the tenant on the API side. Match on the time of the `get_rows called`, `get_top_n called` or `tool error` line. For a failed export, also look for the API's `Tenant '<tenant>': Data request ...` line just before.
+- **The caller's identity.** With OAuth, this server passes the caller's own access token straight on to the API, so the API sees the same user (the token's `sub` claim) and OAuth client as the `client_id` in this server's log. In legacy mode the API sees the API key, and the tenant is the best link.
 
 ## Deployment
 
@@ -293,6 +386,8 @@ python -m pip install -r requirements.txt
 ```
 
 ## Recent Changes
+- **2026-11: Logging and error reporting.** One log line per MCP request with client, tenant and token fingerprint; credentials never logged (GHSA-3x42-7cvw-r9jv); tool errors give the caller a safe message and a correlation ID, with the detail in the log (GHSA-xv3j-j949-g8wx). See [Logging](#logging) and [Error reporting](#error-reporting).
+
 - **2025-12-05: Added support for larger datasets by saving results in DuckDB database and adding a tool to query that.**
 
 - **2025-10-29: Optional OAuth Authentication**
