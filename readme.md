@@ -334,13 +334,25 @@ Requests that arrive with no `Authorization` header at all are logged separately
 
 ### Cross-referencing with the inmydata API logs
 
-The correlation ID is created by this server and is **not sent to the inmydata API**, so it will not appear in the API's logs. To match an entry in this server's log with one in the API's logs, use:
+The correlation ID is created by this server and is **not sent to the inmydata API**, so it will not appear in the API's logs. The API does not log tokens or token fingerprints either. The links between the two sets of logs are described below.
 
-- **The support reference (API 5xx errors).** When the API fails with a 5xx, its response ends `Contact support with reference <hex>`. The customer's error message includes this as `quoting reference <hex>`, and the full response is in this server's ERROR traceback under the correlation ID. Search the API logs for that reference. This is the most reliable link.
-- **Tenant and time.** Every API call goes to `https://<tenant>.<server>/api/developer/v1/...`, so the tenant in this server's log matches the tenant on the API side. Match on the time of the tool call (the timestamp of the `get_rows called`, `get_top_n called` or `tool error` line) and the endpoint. Allow for the API call starting a moment after the `called` line.
-- **The caller's identity.** With OAuth, this server passes the caller's own access token straight on to the API, so the API sees the same user (the token's `sub` claim) and OAuth client as the `client_id` in this server's log. In legacy mode, the API sees the API key, and the tenant is the best link.
-- **The API's error message (4xx).** For 4xx errors, the WARNING line contains the API's response, and the customer saw a shortened, one-line version of the same text. Search the API logs for that message.
-- **The token fingerprint.** If the API logs a SHA-256 fingerprint of the bearer token in the same way (first 8 hex characters), it will match `token=` here. If it does not, but you have the token, work out the fingerprint with the command above.
+**What the API logs.** The data endpoint, `/api/developer/v1/ai/data`, is used by `get_rows`, `get_top_n`, `get_rows_fast` and `get_top_n_fast`. Since the inmydata changes of 17 November 2026 (commits `0354fc449` and `72f21228c` in `datapaltd/inmydata`), this endpoint logs its failures at Error level as follows:
+
+| What happened | API response | API log line |
+|---|---|---|
+| Unexpected failure | HTTP 500: `Unable to retrieve data. Contact support with reference <32 hex characters>.` | `Error in AIController.GetData (reference <same 32 hex characters>): <full error, including inner errors>` |
+| Bad field, filter or subject in the request (wrong name, hidden field, field requested twice) | HTTP 400 with a one-line message, for example `Field 'Invoice Date' not found in subject 'Jobs'. Use a field from the subject schema...` | `Error in AIController.GetData: <full error>`. Contains the same message, with no reference. |
+| The export step behind the endpoint failed | (leads to the HTTP 500 above) | `Tenant '<tenant>': Data request 'exportdata' failed (status <status>): <detail>` (or `'getpasaidata'` for PAS subjects), logged just before the 500 line |
+| Request body could not be read (missing required value and so on) | HTTP 400 with a one-line summary | Not logged |
+
+The other endpoints (schema, calendar, question and chart) were not changed, so they have no support reference.
+
+**How to match the two logs:**
+
+- **API 500s: use the support reference.** This is the most reliable link. The customer's error message ends `quoting reference <hex>`. This server's ERROR line for the same correlation ID includes the API's full response, with the same reference in it. Search the API logs for `reference <hex>` to find the `Error in AIController.GetData` line and the full error.
+- **API 400s: use the message text.** This server's WARNING line (`tool error in get_rows_fast (cid=...): ...`) contains the API's message, and the customer saw the same text (shortened to 300 characters if necessary). Search the API logs for `Error in AIController.GetData` lines containing that message, at about the same time.
+- **Anything else: use tenant and time.** Every API call goes to `https://<tenant>.<server>/api/developer/v1/...`, so the tenant in this server's log is the tenant on the API side. Match on the time of the `get_rows called`, `get_top_n called` or `tool error` line. For a failed export, also look for the API's `Tenant '<tenant>': Data request ...` line just before.
+- **The caller's identity.** With OAuth, this server passes the caller's own access token straight on to the API, so the API sees the same user (the token's `sub` claim) and OAuth client as the `client_id` in this server's log. In legacy mode the API sees the API key, and the tenant is the best link.
 
 ## Deployment
 
